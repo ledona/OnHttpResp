@@ -1,0 +1,8 @@
+tqdm
+requests
+sqlalchemy
+pytz
+
+# for testing
+nose
+freezegun
