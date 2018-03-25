@@ -112,7 +112,7 @@ class HTTPReqError(Exception):
         self.http_resp = http_response
         self.msg = msg
 
-    def __repr__(self):
+    def __str__(self):
         return "HTTPReqError msg '{}'\nstatus code {}\nHeaders:\n{}\nContent:\n{}" \
             .format(self.msg,
                     self.http_resp.status_code if self.http_resp is not None else None,
