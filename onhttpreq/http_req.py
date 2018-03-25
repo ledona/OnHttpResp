@@ -4,13 +4,14 @@ Shared HTTP requester for API requests
 from datetime import datetime, timedelta
 import time
 import http
-from tqdm import tqdm
+import tqdm
 import requests
 from sqlalchemy.schema import Index
 import sqlalchemy
 from sqlalchemy.ext.declarative import declarative_base
 import os
 import json
+import math
 from sqlalchemy.orm import sessionmaker
 
 
@@ -144,6 +145,7 @@ class HTTPReq(object):
           Available cmds and the arg_dict keys are
 
           ON_RESPONSE_WAIT_RETRY: 'reason', 'duration'  - Wait for duration seconds then repeat the request
+            if this is used with progress then duration will be rounded up to the nearest second
           ON_RESPONSE_RETURN_WAIT: 'duration' - return the response to the caller but do not execute any new
              requests until the duration has expired
         """
@@ -185,7 +187,7 @@ class HTTPReq(object):
         # wait an extra second for good measure
         if self.verbose or self.progress:
             if self.progress:
-                for _ in tqdm.trange(duration, desc="waiting on rate limit", leave=False):
+                for _ in tqdm.trange(math.ceil(duration), desc="waiting on rate limit", leave=False):
                     time.sleep(1)
 
             else:
