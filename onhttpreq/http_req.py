@@ -172,6 +172,10 @@ class HTTPReq(object):
         self.verbose = verbose
         self.http_requests = 0
 
+    @property
+    def caching_enabled(self):
+        return self._cache is not None
+
     def _wait(self, reason=None, duration=None, started_waiting_dt=None):
         assert duration is not None
 
