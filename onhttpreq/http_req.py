@@ -274,7 +274,7 @@ class HTTPReq(object):
                     if self.verbose:
                         print("HTTPReq request timed out... {}".format(ex))
 
-                if self.verbose:
+                if self.verbose and r is not None:
                     print("HTTPReq response for attempt {}/{} code: {}".format(self.__tries + 1,
                                                                                self._retries,
                                                                                r.status_code))
