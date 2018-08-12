@@ -12,6 +12,8 @@ from sqlalchemy.ext.declarative import declarative_base
 import os
 import json
 import math
+from io import BytesIO
+import bz2
 from sqlalchemy.orm import sessionmaker
 
 
@@ -22,7 +24,8 @@ class _HTTPCacheJson(_SQLAlchemyORMBase):
     __tablename__ = 'json_cache'
     url = sqlalchemy.Column(sqlalchemy.String(2000), primary_key=True)
     cached_on = sqlalchemy.Column(sqlalchemy.DateTime, default=sqlalchemy.func.now())
-    json = sqlalchemy.Column(sqlalchemy.String, nullable=False)
+    json = sqlalchemy.Column(sqlalchemy.String, nullable=True)
+    json_bzip2 = sqlalchemy.Column(sqlalchemy.LargeBinary, nullable=True)
     expire_on_dt = sqlalchemy.Column(sqlalchemy.DateTime,
                                      doc="If current date/time is past this datetime then this record can be deleted")
 
@@ -30,25 +33,31 @@ class _HTTPCacheJson(_SQLAlchemyORMBase):
 Index('ix_expire_on_dt', _HTTPCacheJson.expire_on_dt)
 
 
+def create_sessionmaker(filename, verbose=False):
+        db_path = ('/' + filename) if filename is not None else ""
+        engine = sqlalchemy.create_engine('sqlite://' + db_path, echo=verbose)
+        return sessionmaker(bind=engine)
+
+
 class _HTTPCache(object):
     """
     cache http responses to a DB
     """
-    def __init__(self, filename=None, verbose=False, dont_expire=False):
+    def __init__(self, filename=None, verbose=False, dont_expire=False, store_as_compressed=False):
         """
         filename - if None then the DB will be in memory
+        store_as_compressed - store in compressed form, and expect the cache to be compressed
         """
         create_cache = filename is None or not os.path.isfile(filename)
         self._dont_expire = dont_expire
         if create_cache and verbose:
             print("Creating cache file '{}'".format(filename))
 
-        db_path = ('/' + filename) if filename is not None else ""
-        self.engine = sqlalchemy.create_engine('sqlite://' + db_path, echo=verbose)
-        self.sessionmaker = sessionmaker(bind=self.engine)
+        self.sessionmaker = create_sessionmaker(filename, verbose=verbose)
+        self.store_as_compressed = store_as_compressed
 
         if create_cache:
-            _SQLAlchemyORMBase.metadata.create_all(self.engine)
+            _SQLAlchemyORMBase.metadata.create_all(engine)
 
     def get(self, url):
         session = self.sessionmaker()
@@ -64,7 +73,14 @@ class _HTTPCache(object):
             cache_result = None
 
         session.close()
-        return cache_result.json if cache_result is not None else None
+
+        if cache_result is None:
+            return None
+        elif cache_result.json is not None:
+            return cache_result.json
+        else:
+            assert cache_result.json_bzip2 is not None
+            return bz2.decompress(cache_result.json_bzip2)
 
     def get_json(self, url):
         text = self.get(url)
@@ -79,20 +95,31 @@ class _HTTPCache(object):
         expire_on_dt - in UTC
         """
         session = self.sessionmaker()
-        cache_data = _HTTPCacheJson(url=url, json=json_text, expire_on_dt=expire_on_dt)
+        kwarg_data = ({'json_bzip2': bz2.compress(json_text)}
+                      if self.store_as_compressed else
+                      {'json': json_text})
+        cache_data = _HTTPCacheJson(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
         session.add(cache_data)
         try:
             session.commit()
         except sqlalchemy.exc.IntegrityError as e:
+            # overwrite the existing value
+
             # this exception is sufficient for the sqlite3 cache implementation, may not be reslient to updates
             if e.args[0] != "(sqlite3.IntegrityError) UNIQUE constraint failed: json_cache.url":
+                # there was some other exception
                 raise
 
             session.rollback()
             cache_data = session.query(_HTTPCacheJson) \
                                 .filter(_HTTPCacheJson.url == url) \
                                 .one()
-            cache_data.json = json_text
+
+            if self.store_as_compressed:
+                cache_data.json_bzip2 = bz2.compress(json_text)
+            else:
+                cache_data.json = json_text
+
             cache_data.expire_on_dt = expire_on_dt
             session.commit()
         session.close()

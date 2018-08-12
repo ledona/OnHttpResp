@@ -4,5 +4,5 @@ sqlalchemy
 pytz
 
 # for testing
-nose
+pytest
 freezegun

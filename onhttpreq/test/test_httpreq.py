@@ -1,57 +1,67 @@
 from freezegun import freeze_time
 from unittest.mock import patch, MagicMock
+import pytest
 import unittest
 from datetime import datetime, timedelta, timezone
 import time
 import json
 import http
 
-from ..http_req import (_HTTPCache, HTTPReq, HTTPReqError,
+from ..http_req import (_HTTPCache, HTTPReq, HTTPReqError, _HTTPCacheJson,
                         ON_RESPONSE_WAIT_RETRY, ON_RESPONSE_RETURN_WAIT)
 
 
-class TestCache(unittest.TestCase):
-    """ test the creation and use of the http req caching """
-    def test_cache(self):
-        cache = _HTTPCache()
-        self.assertIsNone(cache.get("url"))
-        self.assertIsNone(cache.get_json("url"))
+@pytest.mark.parametrize("store_as_compressed", [False, True])
+def test_cache(store_as_compressed):
+    cache = _HTTPCache(store_as_compressed=store_as_compressed)
+    assert cache.get("url") is None
+    assert cache.get_json("url") is None
 
-        ref_json_text = '["foo", {"bar":["baz", null, 1.0, 2]}]'
-        ref_json = json.loads(ref_json_text)
-        cache.set("url", ref_json_text)
-        test_json_text = cache.get("url")
-        self.assertEqual(ref_json_text, test_json_text)
-        test_json = cache.get_json("url")
-        self.assertEqual(ref_json, test_json)
+    ref_json_text = b'["foo", {"bar":["baz", null, 1.0, 2]}]'
+    ref_json = json.loads(ref_json_text)
+    cache.set("url", ref_json_text)
+    test_json_text = cache.get("url")
 
-    def test_expire(self):
-        # behavior when expiration is disabled
-        ts = time.time()
-        utc_offset = 0
-        _before_expiration = datetime(2017, 10, 22, 5, 53)
-        _expire_on = datetime(2017, 10, 22, 5, 54)
-        _after_expiration = datetime(2017, 10, 22, 5, 55)
-        url = "url1"
+    assert ref_json_text == test_json_text
+    test_json = cache.get_json("url")
+    assert ref_json == test_json
 
-        cache = _HTTPCache(dont_expire=True)
-        cache.set(url, '[]', expire_on_dt=_expire_on)
-        with freeze_time(_before_expiration):
-            self.assertIsNotNone(cache.get(url))
-        with freeze_time(_after_expiration):
-            self.assertIsNotNone(cache.get(url))
+    session = cache.sessionmaker()
+    cache_result = session.query(_HTTPCacheJson) \
+                          .filter(_HTTPCacheJson.url == "url") \
+                          .one_or_none()
+    assert (cache_result.json_bzip2 is not None) == store_as_compressed
+    assert (cache_result.json is not None) != store_as_compressed
+    session.close()
 
-        cache = _HTTPCache(dont_expire=False)
-        cache.set(url, '[]', expire_on_dt=_expire_on)
-        with freeze_time(_before_expiration):
-            self.assertIsNotNone(cache.get(url))
 
-        with freeze_time(_after_expiration):
-            self.assertIsNone(cache.get(url))
+def test_expire():
+    # behavior when expiration is disabled
+    ts = time.time()
+    utc_offset = 0
+    _before_expiration = datetime(2017, 10, 22, 5, 53)
+    _expire_on = datetime(2017, 10, 22, 5, 54)
+    _after_expiration = datetime(2017, 10, 22, 5, 55)
+    url = "url1"
 
-            ref_result = '["foo"]'
-            cache.set(url, ref_result)
-            self.assertEqual(ref_result, cache.get(url))
+    cache = _HTTPCache(dont_expire=True)
+    cache.set(url, '[]', expire_on_dt=_expire_on)
+    with freeze_time(_before_expiration):
+        assert cache.get(url) is not None
+    with freeze_time(_after_expiration):
+        assert cache.get(url) is not None
+
+    cache = _HTTPCache(dont_expire=False)
+    cache.set(url, '[]', expire_on_dt=_expire_on)
+    with freeze_time(_before_expiration):
+        assert cache.get(url) is not None
+
+    with freeze_time(_after_expiration):
+        assert cache.get(url) is None
+
+        ref_result = '["foo"]'
+        cache.set(url, ref_result)
+        assert ref_result == cache.get(url)
 
 
 class TestHTTPReq(unittest.TestCase):
