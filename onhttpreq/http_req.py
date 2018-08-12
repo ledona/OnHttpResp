@@ -157,7 +157,7 @@ class HTTPReq(object):
                  http_retries=2, requests_kwargs=None,
                  on_response=None, request_timeout=None,
                  cache_filename=None, cache_in_memory=False, cache_overwrite=False,
-                 cache_dont_expire=False):
+                 cache_dont_expire=False, compression=False):
         """
         cache_in_memory - if true then create an in memory cache
         requests_kwargs - kwargs tp pass to requests when a get/request is made
@@ -181,7 +181,9 @@ class HTTPReq(object):
 
         self.cache_overwrite = cache_overwrite
         self.cache_filename = cache_filename
-        self._cache = (_HTTPCache(filename=cache_filename, verbose=verbose, dont_expire=cache_dont_expire)
+        self._cache = (_HTTPCache(filename=cache_filename, verbose=verbose,
+                                  dont_expire=cache_dont_expire,
+                                  store_as_compressed=compression)
                        if (cache_filename is not None) or (cache_in_memory is True)
                        else None)
 
