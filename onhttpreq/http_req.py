@@ -34,9 +34,10 @@ Index('ix_expire_on_dt', _HTTPCacheJson.expire_on_dt)
 
 
 def create_sessionmaker(filename, verbose=False):
-        db_path = ('/' + filename) if filename is not None else ""
-        engine = sqlalchemy.create_engine('sqlite://' + db_path, echo=verbose)
-        return sessionmaker(bind=engine)
+    """ returns: sessionmaker, engine """
+    db_path = ('/' + filename) if filename is not None else ""
+    engine = sqlalchemy.create_engine('sqlite://' + db_path, echo=verbose)
+    return sessionmaker(bind=engine), engine
 
 
 class _HTTPCache(object):
@@ -53,7 +54,7 @@ class _HTTPCache(object):
         if create_cache and verbose:
             print("Creating cache file '{}'".format(filename))
 
-        self.sessionmaker = create_sessionmaker(filename, verbose=verbose)
+        self.sessionmaker, engine = create_sessionmaker(filename, verbose=verbose)
         self.store_as_compressed = store_as_compressed
 
         if create_cache:
@@ -95,9 +96,12 @@ class _HTTPCache(object):
         expire_on_dt - in UTC
         """
         session = self.sessionmaker()
-        kwarg_data = ({'json_bzip2': bz2.compress(json_text)}
-                      if self.store_as_compressed else
-                      {'json': json_text})
+        if self.store_as_compressed:
+            assert isinstance(json_text, (str, bytes))
+            data = json_text if isinstance(json_text, bytes) else str.encode(json_text)
+            kwarg_data = {'json_bzip2': bz2.compress(data)}
+        else:
+            kwarg_data = {'json': json_text}
         cache_data = _HTTPCacheJson(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
         session.add(cache_data)
         try:
@@ -116,7 +120,8 @@ class _HTTPCache(object):
                                 .one()
 
             if self.store_as_compressed:
-                cache_data.json_bzip2 = bz2.compress(json_text)
+                data = json_text if isinstance(json_text, bytes) else str.encode(json_text)
+                cache_data.json_bzip2 = bz2.compress(data)
             else:
                 cache_data.json = json_text
 
@@ -288,7 +293,7 @@ class HTTPReq(object):
             if result is not None:
                 self.requests_from_cache += 1
             if self.verbose:
-                print("result {}found in cache".format("not " if result is not None else ""))
+                print("{}found in cache".format("not " if result is None else ""))
 
         if result is None:
             # cache search failed

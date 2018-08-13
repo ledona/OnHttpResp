@@ -42,7 +42,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # open the dbs
-    session = create_sessionmaker(args.filename)()
+    session, _ = create_sessionmaker(args.filename)()
 
     query = session.query(_HTTPCacheJson)
     rows = query.count()
