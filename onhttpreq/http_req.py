@@ -206,6 +206,17 @@ class HTTPReq(object):
         self.verbose = verbose
         self.http_requests = 0
 
+        self._last_result_details = None
+
+    @property
+    def caching(self):
+        return self._cache is not None
+
+    @property
+    def last_result_details(self):
+        """ return dict describing what happened during the last get """
+        return self._last_result_from_cache
+
     @property
     def caching_enabled(self):
         return self._cache is not None
@@ -277,6 +288,8 @@ class HTTPReq(object):
                 'request_retries': self.total_retries}
 
     def get(self, url, parse_json=True):
+        self._last_result_details = {'url': url, 'http_attempts': 0}
+
         if self._return_wait_cmd is not None:
             self._wait(**self._return_wait_cmd)
             self._return_wait_cmd = None
@@ -291,6 +304,7 @@ class HTTPReq(object):
                       if parse_json else
                       self._cache.get(url))
             if result is not None:
+                last_result_details['retrieved_from'] = 'cache'
                 self.requests_from_cache += 1
             if self.verbose:
                 print("{}found in cache".format("not " if result is None else ""))
@@ -326,10 +340,13 @@ class HTTPReq(object):
                     print("Retry #{}".format(self.__tries + 1))
 
             self.total_retries += max(0, self.__tries - 1)
+            self._last_result_details['http_attempts'] += 1
 
             if r is None or r.status_code != http.client.OK:
                 msg = "Failed to retrieve '{}' after {} attempts. Skipping" \
                       .format(url, self.__tries + 1)
+                self._last_result_details['error'] = (msg, r or 'timedout')
+
                 if self.progress:
                     print(msg)
                 if r is not None:
@@ -339,9 +356,10 @@ class HTTPReq(object):
                     self.error_skips.append("No response, timedout")
                 raise HTTPReqError(http_response=r, msg=msg)
 
+            self._last_result_details['retrieved_from'] = 'web'
+
             if self.verbose:
                 print()
-            if self._cache is not None:
                 self._cache.set(url, r.text)
             result = r.json() if parse_json else r.content
 
