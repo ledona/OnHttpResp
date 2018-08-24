@@ -215,7 +215,7 @@ class HTTPReq(object):
     @property
     def last_result_details(self):
         """ return dict describing what happened during the last get """
-        return self._last_result_from_cache
+        return self._last_result_details
 
     @property
     def caching_enabled(self):
@@ -360,7 +360,7 @@ class HTTPReq(object):
 
             if self.verbose:
                 print()
-                self._cache.set(url, r.text)
+            self._cache.set(url, r.text)
             result = r.json() if parse_json else r.content
 
         return result
