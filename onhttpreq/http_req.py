@@ -304,7 +304,7 @@ class HTTPReq(object):
                       if parse_json else
                       self._cache.get(url))
             if result is not None:
-                last_result_details['retrieved_from'] = 'cache'
+                self._last_result_details['retrieved_from'] = 'cache'
                 self.requests_from_cache += 1
             if self.verbose:
                 print("{}found in cache".format("not " if result is None else ""))
@@ -356,11 +356,14 @@ class HTTPReq(object):
                     self.error_skips.append("No response, timedout")
                 raise HTTPReqError(http_response=r, msg=msg)
 
+            if self._cache is not None:
+                self._cache.set(url, r.text)
+
             self._last_result_details['retrieved_from'] = 'web'
 
             if self.verbose:
                 print()
-            self._cache.set(url, r.text)
+
             result = r.json() if parse_json else r.content
 
         return result
