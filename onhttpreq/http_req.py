@@ -171,15 +171,15 @@ class HTTPReq(object):
         on_response - A callback that can be used to process the http request responses prior to
           returning results. Useful for handling header data that should result in varying the
           behavior of the cache, handling rate limits, etc.
-          This should be a function a request response, and returns None or
-          a tuple command in the form of a tuple (cmd, args_dict). If None is returned then no additional
+          This should be a function that takes a request response, and returns None or
+          a command in the form of a tuple (cmd, args_dict). If None is returned then no additional
           processing will be executed and the request response will be returned to the caller
           Available cmds and the arg_dict keys are
 
           ON_RESPONSE_WAIT_RETRY: 'reason', 'duration'  - Wait for duration seconds then repeat the request
             if this is used with progress then duration will be rounded up to the nearest second
           ON_RESPONSE_RETURN_WAIT: 'duration' - return the response to the caller but do not execute any new
-             requests until the duration has expired
+             requests until the duration has expired (useful for throttling)
         """
         assert not ((cache_filename is not None) and cache_in_memory), \
             "caching can't both be in memory and to a file"
@@ -236,7 +236,8 @@ class HTTPReq(object):
         # wait an extra second for good measure
         if self.verbose or self.progress:
             if self.progress:
-                for _ in tqdm.trange(math.ceil(duration), desc="waiting on rate limit", leave=False):
+                for _ in tqdm.trange(math.ceil(duration), desc=reason or "waiting on rate limit",
+                                     leave=False):
                     time.sleep(1)
 
             else:
