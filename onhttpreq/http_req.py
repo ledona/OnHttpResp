@@ -139,6 +139,11 @@ class _HTTPCache(object):
         session.close()
 
 
+class CacheOnlyError(Exception):
+    """ raised if cache_only is enabled and a url is not in the cache """
+    pass
+
+
 class HTTPReqError(Exception):
     def __init__(self, http_response=None, msg=None):
         super().__init__(msg, http_response)
@@ -317,7 +322,10 @@ class HTTPReq(object):
             if self.verbose:
                 print("{}found in cache".format("not " if result is None else ""))
 
-        if result is None and not self.cache_only:
+        if result is None:
+            if self.cache_only:
+                raise CacheOnlyError("'{}' not in cache".format(url))
+
             # cache search failed
             self.__tries = 0
             while self.__tries < self._retries + 1:
@@ -350,7 +358,7 @@ class HTTPReq(object):
             self.total_retries += max(0, self.__tries - 1)
             self._last_result_details['http_attempts'] += 1
 
-            if r is None or r.status_code != http.client.OK:
+            if (r is None) or (r.status_code != http.client.OK):
                 msg = "Failed to retrieve '{}' after {} attempts. Skipping" \
                       .format(url, self.__tries + 1)
                 self._last_result_details['error'] = (msg, r or 'timedout')
