@@ -162,9 +162,11 @@ class HTTPReq(object):
                  http_retries=2, requests_kwargs=None,
                  on_response=None, request_timeout=None,
                  cache_filename=None, cache_in_memory=False, cache_overwrite=False,
-                 cache_dont_expire=False, compression=False):
+                 cache_dont_expire=False, compression=False, cache_only=False):
         """
         cache_in_memory - if true then create an in memory cache
+        cache_only - results will only come from the cache. if a url is not available in the cache
+          then an error occurs
         requests_kwargs - kwargs tp pass to requests when a get/request is made
         request_timeout - timeout in seconds for a request reqponse, if no response is received
           then a retry is attempted (if there are retries remaining)
@@ -185,7 +187,12 @@ class HTTPReq(object):
             "caching can't both be in memory and to a file"
 
         self.cache_overwrite = cache_overwrite
+
+        assert not (cache_filename is None and cache_only), \
+            "cache_only + no cache_filename means there is no chance of getting results"
         self.cache_filename = cache_filename
+        self.cache_only = cache_only
+
         self._cache = (_HTTPCache(filename=cache_filename, verbose=verbose,
                                   dont_expire=cache_dont_expire,
                                   store_as_compressed=compression)
@@ -310,7 +317,7 @@ class HTTPReq(object):
             if self.verbose:
                 print("{}found in cache".format("not " if result is None else ""))
 
-        if result is None:
+        if result is None and not self.cache_only:
             # cache search failed
             self.__tries = 0
             while self.__tries < self._retries + 1:
