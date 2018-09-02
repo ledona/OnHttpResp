@@ -27,7 +27,7 @@ class _HTTPCacheJson(_SQLAlchemyORMBase):
     json = sqlalchemy.Column(sqlalchemy.String, nullable=True)
     json_bzip2 = sqlalchemy.Column(sqlalchemy.LargeBinary, nullable=True)
     expire_on_dt = sqlalchemy.Column(sqlalchemy.DateTime,
-                                     doc="If current date/time is past this datetime then this record can be deleted")
+                                     doc="If current date/time is past this datetime then this record can be replaced by updated data")
 
 
 Index('ix_expire_on_dt', _HTTPCacheJson.expire_on_dt)
@@ -91,10 +91,18 @@ class _HTTPCache(object):
         else:
             return None
 
-    def set(self, url, json_text, expire_on_dt=None):
+    def set(self, url, json_text, expire_on_dt=None, expire_time_delta=None):
         """
+        Use either expire_on_dt or expire_time_delta
+
         expire_on_dt - in UTC
+        expire_time_delta - a timedelta object that will be added to datetime.now() to calculate the
+           expire_on_dt
         """
+        assert not (expire_on_dt is not None and expire_time_delta is not None)
+        if expire_on_dt is None and expire_time_delta is not None:
+            expire_on_dt = datetime.utcnow() + expire_time_delta
+
         session = self.sessionmaker()
         if self.store_as_compressed:
             assert isinstance(json_text, (str, bytes))
@@ -129,7 +137,13 @@ class _HTTPCache(object):
             session.commit()
         session.close()
 
-    def set_expiration(self, url, expire_on_dt):
+    def set_expiration(self, url, expire_on_dt=None, expire_time_delta=None):
+        if expire_on_dt is None:
+            assert expire_time_delta is not None
+            expire_on_dt = datetime.utcnow() + expire_time_delta
+        elif expire_time_delta is not None:
+            raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
+
         session = self.sessionmaker()
         _stat_cache = session.query(_HTTPCacheJson) \
                              .filter(_HTTPCacheJson.url == url) \
@@ -283,12 +297,11 @@ class HTTPReq(object):
                 raise ValueError("on_response returned an unknown command. {}".format(res))
         return False
 
-    def set_cached_expiration(self, url, dt):
+    def set_cached_expiration(self, url, **expiration):
         """
-        dt - this should be in UTC
+        for kwargs see cache set_expiration
         """
-        assert self._cache is not None, "Caching is not enabled!"
-        self._cache.set_expiration(url, dt)
+        self._cache.set_expiration(url, **expiration)
 
     @property
     def history(self):
