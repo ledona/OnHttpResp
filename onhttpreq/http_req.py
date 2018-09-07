@@ -185,7 +185,7 @@ class HTTPReq(object):
         """
         cache_in_memory - if true then create an in memory cache
         cache_only - results will only come from the cache. if a url is not available in the cache
-          then an error occurs
+          then an error occurs, when this is true nothing in the cache will be considered expired
         requests_kwargs - kwargs tp pass to requests when a get/request is made
         request_timeout - timeout in seconds for a request reqponse, if no response is received
           then a retry is attempted (if there are retries remaining)
@@ -204,6 +204,8 @@ class HTTPReq(object):
         """
         assert not ((cache_filename is not None) and cache_in_memory), \
             "caching can't both be in memory and to a file"
+        assert not (cache_only and not cache_dont_expire), \
+            "cache_dont_expire must be Truw if cache_only is True"
 
         self.cache_overwrite = cache_overwrite
 
