@@ -15,6 +15,7 @@ import math
 from io import BytesIO
 import bz2
 from sqlalchemy.orm import sessionmaker
+import warnings
 
 
 _SQLAlchemyORMBase = declarative_base()
@@ -303,7 +304,11 @@ class HTTPReq(object):
         """
         for kwargs see cache set_expiration
         """
-        self._cache.set_expiration(url, **expiration)
+        if self._cache:
+            self._cache.set_expiration(url, **expiration)
+        else:
+            warnings.warn("Attempted to expire '{}' from cache, but caching is not currently enabled."
+                          .format(url))
 
     @property
     def history(self):
