@@ -320,7 +320,12 @@ class HTTPReq(object):
                 'error_skips': self.error_skips,
                 'request_retries': self.total_retries}
 
-    def get(self, url, parse_json=True):
+    def get(self, url, parse_json=True, cache_fail_func=None):
+        """
+        cache_faile_msg: if cache is enabled and the url is not in the cache and this is not None
+           then call this func. Useful for displaying messages
+        """
+
         self._last_result_details = {'url': url, 'http_attempts': 0}
 
         if self._return_wait_cmd is not None:
@@ -347,6 +352,9 @@ class HTTPReq(object):
                 raise CacheOnlyError("'{}' not in cache".format(url))
 
             # cache search failed
+            if cache_fail_func is not None:
+                cache_fail_func()
+
             self.__tries = 0
             while self.__tries < self._retries + 1:
                 self.__tries += 1
