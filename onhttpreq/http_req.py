@@ -190,6 +190,7 @@ class HTTPReq(object):
         requests_kwargs - kwargs tp pass to requests when a get/request is made
         request_timeout - timeout in seconds for a request reqponse, if no response is received
           then a retry is attempted (if there are retries remaining)
+        compression - compress the cache
         on_response - A callback that can be used to process the http request responses prior to
           returning results. Useful for handling header data that should result in varying the
           behavior of the cache, handling rate limits, etc.
