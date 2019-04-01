@@ -21,14 +21,18 @@ import warnings
 _SQLAlchemyORMBase = declarative_base()
 
 
+CURRENT_CACHE_DB_VERSION = 1
+
+
 class _HTTPCacheJson(_SQLAlchemyORMBase):
     __tablename__ = 'json_cache'
     url = sqlalchemy.Column(sqlalchemy.String(2000), primary_key=True)
     cached_on = sqlalchemy.Column(sqlalchemy.DateTime, default=sqlalchemy.func.now())
-    json = sqlalchemy.Column(sqlalchemy.String, nullable=True)
-    json_bzip2 = sqlalchemy.Column(sqlalchemy.LargeBinary, nullable=True)
-    expire_on_dt = sqlalchemy.Column(sqlalchemy.DateTime,
-                                     doc="If current date/time is past this datetime then this record can be replaced by updated data")
+    content = sqlalchemy.Column(sqlalchemy.String, nullable=True)
+    content_bzip2 = sqlalchemy.Column(sqlalchemy.LargeBinary, nullable=True)
+    expire_on_dt = sqlalchemy.Column(
+        sqlalchemy.DateTime,
+        doc="If current date/time is past this datetime then this record can be replaced by updated data")
 
 
 Index('ix_expire_on_dt', _HTTPCacheJson.expire_on_dt)
@@ -56,10 +60,15 @@ class _HTTPCache(object):
             print("Creating cache file '{}'".format(filename))
 
         self.sessionmaker, engine = create_sessionmaker(filename, verbose=verbose)
-        self.store_as_compressed = store_as_compressed
 
         if create_cache:
             _SQLAlchemyORMBase.metadata.create_all(engine)
+            engine.execute("pragma user_version = {}".format(CURRENT_CACHE_DB_VERSION))
+            self.version = CURRENT_CACHE_DB_VERSION
+        else:
+            self.version = engine.execute("pragma user_version").fetchone()[0]
+
+        self.store_as_compressed = store_as_compressed
 
     def get(self, url):
         session = self.sessionmaker()
@@ -153,9 +162,27 @@ class _HTTPCache(object):
         session.commit()
         session.close()
 
+    def _migrate_from_0_to_1(self):
+        engine = self.sessionmaker.kw['bind']
+        print("Migrating cache '{}' from version '0' to version '1'".format(
+            engine.url))
+        raise NotImplementedError()
+
+    def bring_up_to_date(self):
+        if self.version == 0:
+            self._migrate_from_0_to_1()
+
+        if self.version != CURRENT_CACHE_DB_VERSION:
+            raise NotImplementedError("Don't know how to migrate from version '{}' to current version!"
+                                      .format(self.version))
+
 
 class CacheOnlyError(Exception):
     """ raised if cache_only is enabled and a url is not in the cache """
+    pass
+
+
+class CacheOutOfDate(Exception):
     pass
 
 
@@ -181,9 +208,14 @@ class HTTPReq(object):
     def __init__(self, verbose=False, progress=False,
                  http_retries=2, requests_kwargs=None,
                  on_response=None, request_timeout=None,
+                 cache_migrate=False,
                  cache_filename=None, cache_in_memory=False, cache_overwrite=False,
                  cache_dont_expire=False, compression=False, cache_only=False):
         """
+        cache_migrate - What to do if the cache at cache_filename is out of date. Options are
+          True - migrate to the most up to date cache
+          False - Raise a cache out of date exception
+          'PROMPT' - proompt the user for what to do
         cache_in_memory - if true then create an in memory cache
         cache_only - results will only come from the cache. if a url is not available in the cache
           then an error occurs, when this is true nothing in the cache will be considered expired
@@ -221,6 +253,21 @@ class HTTPReq(object):
                                   store_as_compressed=compression)
                        if (cache_filename is not None) or (cache_in_memory is True)
                        else None)
+
+        if self._cache.version != CURRENT_CACHE_DB_VERSION:
+            if cache_migrate == 'PROMPT':
+                migrate = input("Cache at '{}' is for a previous version '{}'. Upgrade the cache? ('Yes' to upgrade): "
+                                .format(cache_filename, self._cache.version))
+                cache_migrate = migrate == 'Yes'
+
+            if cache_migrate is True:
+                self._cache.bring_up_to_date()
+            elif cache_migrate is False:
+                raise CacheOutOfDate("Cache is out of date. Cache at '{}' has version '{}'. Current version is '{}'"
+                                     .format(cache_filename, self._cache.version, CURRENT_CACHE_DB_VERSION))
+            else:
+                # should not get here
+                raise ValueError("cache_migrate must be True, False or 'PROMPT'")
 
         self._requests_kwargs = requests_kwargs or {}
         self._request_timeout = request_timeout
