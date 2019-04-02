@@ -24,8 +24,8 @@ _SQLAlchemyORMBase = declarative_base()
 CURRENT_CACHE_DB_VERSION = 1
 
 
-class _HTTPCacheJson(_SQLAlchemyORMBase):
-    __tablename__ = 'json_cache'
+class _HTTPCacheContent(_SQLAlchemyORMBase):
+    __tablename__ = 'content_cache'
     url = sqlalchemy.Column(sqlalchemy.String(2000), primary_key=True)
     cached_on = sqlalchemy.Column(sqlalchemy.DateTime, default=sqlalchemy.func.now())
     content = sqlalchemy.Column(sqlalchemy.String, nullable=True)
@@ -35,7 +35,7 @@ class _HTTPCacheJson(_SQLAlchemyORMBase):
         doc="If current date/time is past this datetime then this record can be replaced by updated data")
 
 
-Index('ix_expire_on_dt', _HTTPCacheJson.expire_on_dt)
+Index('ix_expire_on_dt', _HTTPCacheContent.expire_on_dt)
 
 
 def create_sessionmaker(filename, verbose=False):
@@ -72,8 +72,8 @@ class _HTTPCache(object):
 
     def get(self, url):
         session = self.sessionmaker()
-        cache_result = session.query(_HTTPCacheJson) \
-                              .filter(_HTTPCacheJson.url == url) \
+        cache_result = session.query(_HTTPCacheContent) \
+                              .filter(_HTTPCacheContent.url == url) \
                               .one_or_none()
 
         # if expiration is enabled then don't return anything that is expired
@@ -87,11 +87,11 @@ class _HTTPCache(object):
 
         if cache_result is None:
             return None
-        elif cache_result.json is not None:
-            return cache_result.json
+        elif cache_result.content is not None:
+            return cache_result.content
         else:
-            assert cache_result.json_bzip2 is not None
-            return bz2.decompress(cache_result.json_bzip2)
+            assert cache_result.content_bzip2 is not None
+            return bz2.decompress(cache_result.content_bzip2)
 
     def get_json(self, url):
         text = self.get(url)
@@ -101,7 +101,7 @@ class _HTTPCache(object):
         else:
             return None
 
-    def set(self, url, json_text, expire_on_dt=None, expire_time_delta=None):
+    def set(self, url, content, expire_on_dt=None, expire_time_delta=None):
         """
         Use either expire_on_dt or expire_time_delta
 
@@ -115,12 +115,12 @@ class _HTTPCache(object):
 
         session = self.sessionmaker()
         if self.store_as_compressed:
-            assert isinstance(json_text, (str, bytes))
-            data = json_text if isinstance(json_text, bytes) else str.encode(json_text)
-            kwarg_data = {'json_bzip2': bz2.compress(data)}
+            assert isinstance(content, (str, bytes))
+            data = content if isinstance(content, bytes) else str.encode(content)
+            kwarg_data = {'content_bzip2': bz2.compress(data)}
         else:
-            kwarg_data = {'json': json_text}
-        cache_data = _HTTPCacheJson(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
+            kwarg_data = {'content': content}
+        cache_data = _HTTPCacheContent(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
         session.add(cache_data)
         try:
             session.commit()
@@ -128,20 +128,20 @@ class _HTTPCache(object):
             # overwrite the existing value
 
             # this exception is sufficient for the sqlite3 cache implementation, may not be reslient to updates
-            if e.args[0] != "(sqlite3.IntegrityError) UNIQUE constraint failed: json_cache.url":
+            if e.args[0] != "(sqlite3.IntegrityError) UNIQUE constraint failed: content_cache.url":
                 # there was some other exception
                 raise
 
             session.rollback()
-            cache_data = session.query(_HTTPCacheJson) \
-                                .filter(_HTTPCacheJson.url == url) \
+            cache_data = session.query(_HTTPCacheContent) \
+                                .filter(_HTTPCacheContent.url == url) \
                                 .one()
 
             if self.store_as_compressed:
-                data = json_text if isinstance(json_text, bytes) else str.encode(json_text)
-                cache_data.json_bzip2 = bz2.compress(data)
+                data = content if isinstance(content, bytes) else str.encode(content)
+                cache_data.content_bzip2 = bz2.compress(data)
             else:
-                cache_data.json = json_text
+                cache_data.content = content
 
             cache_data.expire_on_dt = expire_on_dt
             session.commit()
@@ -155,8 +155,8 @@ class _HTTPCache(object):
             raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
 
         session = self.sessionmaker()
-        _stat_cache = session.query(_HTTPCacheJson) \
-                             .filter(_HTTPCacheJson.url == url) \
+        _stat_cache = session.query(_HTTPCacheContent) \
+                             .filter(_HTTPCacheContent.url == url) \
                              .one()
         _stat_cache.expire_on_dt = expire_on_dt
         session.commit()
@@ -166,7 +166,17 @@ class _HTTPCache(object):
         engine = self.sessionmaker.kw['bind']
         print("Migrating cache '{}' from version '0' to version '1'".format(
             engine.url))
-        raise NotImplementedError()
+
+        conn = sqlite3.connect(engine.url)
+        try:
+            with conn:
+                conn.execute("alter table json_cache rename to content_cache")
+                conn.execute("alter table content_cache add content rename COLUMN json to content")
+                conn.execute("alter table content_cache rename column json_bzip2 to content_bzip2")
+                conn.execute("pragma user_version = 1")
+        finally:
+            conn.close()
+        self.version = 1
 
     def bring_up_to_date(self):
         if self.version == 0:
@@ -208,14 +218,9 @@ class HTTPReq(object):
     def __init__(self, verbose=False, progress=False,
                  http_retries=2, requests_kwargs=None,
                  on_response=None, request_timeout=None,
-                 cache_migrate=False,
                  cache_filename=None, cache_in_memory=False, cache_overwrite=False,
                  cache_dont_expire=False, compression=False, cache_only=False):
         """
-        cache_migrate - What to do if the cache at cache_filename is out of date. Options are
-          True - migrate to the most up to date cache
-          False - Raise a cache out of date exception
-          'PROMPT' - proompt the user for what to do
         cache_in_memory - if true then create an in memory cache
         cache_only - results will only come from the cache. if a url is not available in the cache
           then an error occurs, when this is true nothing in the cache will be considered expired
@@ -255,16 +260,15 @@ class HTTPReq(object):
                        else None)
 
         if self._cache.version != CURRENT_CACHE_DB_VERSION:
-            if cache_migrate == 'PROMPT':
-                migrate = input("Cache at '{}' is for a previous version '{}'. Upgrade the cache? ('Yes' to upgrade): "
-                                .format(cache_filename, self._cache.version))
-                cache_migrate = migrate == 'Yes'
-
-            if cache_migrate is True:
-                self._cache.bring_up_to_date()
-            elif cache_migrate is False:
-                raise CacheOutOfDate("Cache is out of date. Cache at '{}' has version '{}'. Current version is '{}'"
-                                     .format(cache_filename, self._cache.version, CURRENT_CACHE_DB_VERSION))
+            if self._cache.version == 0:
+                migration_instructions = """alter table json_cache rename column json to content;
+alter table json_cache rename column json_bzip2 to content_bzip2;
+alter table json_cache rename to content_cache;
+pragma user_version = 1;
+"""
+                raise CacheOutOfDate("Cache is out of date. Cache at '{}' has version '{}'. Current version is '{}'. To migrate execute the following:\n{}"
+                                     .format(cache_filename, self._cache.version, CURRENT_CACHE_DB_VERSION,
+                                             migration_instructions))
             else:
                 # should not get here
                 raise ValueError("cache_migrate must be True, False or 'PROMPT'")
