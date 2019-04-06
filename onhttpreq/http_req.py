@@ -244,7 +244,7 @@ class HTTPReq(object):
         assert not ((cache_filename is not None) and cache_in_memory), \
             "caching can't both be in memory and to a file"
         assert not (cache_only and not cache_dont_expire), \
-            "cache_dont_expire must be Truw if cache_only is True"
+            "cache_dont_expire must be True if cache_only is True"
 
         self.cache_overwrite = cache_overwrite
 
