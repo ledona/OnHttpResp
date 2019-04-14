@@ -7,7 +7,7 @@ import time
 import json
 import http
 
-from ..http_req import (_HTTPCache, HTTPReq, HTTPReqError, _HTTPCacheJson,
+from ..http_req import (_HTTPCache, _HTTPCacheContent, HTTPReq, HTTPReqError,
                         ON_RESPONSE_WAIT_RETRY, ON_RESPONSE_RETURN_WAIT)
 
 
@@ -27,11 +27,11 @@ def test_cache(store_as_compressed):
     assert ref_json == test_json
 
     session = cache.sessionmaker()
-    cache_result = session.query(_HTTPCacheJson) \
-                          .filter(_HTTPCacheJson.url == "url") \
+    cache_result = session.query(_HTTPCacheContent) \
+                          .filter(_HTTPCacheContent.url == "url") \
                           .one_or_none()
-    assert (cache_result.json_bzip2 is not None) == store_as_compressed
-    assert (cache_result.json is not None) != store_as_compressed
+    assert (cache_result.content_bzip2 is not None) == store_as_compressed
+    assert (cache_result.content is not None) != store_as_compressed
     session.close()
 
 
@@ -119,7 +119,7 @@ class TestHTTPReq(unittest.TestCase):
 
         # expire it
         expiration_dt = datetime(2018, 2, 3, 19, 27)
-        http_req.set_cached_expiration(url, expiration_dt)
+        http_req.set_cached_expiration(url, expire_on_dt=expiration_dt)
 
         # call get again and test
         mock_requests.get.reset_mock()
@@ -157,7 +157,7 @@ class TestHTTPReq(unittest.TestCase):
 
         # expire the data
         expiration_dt = datetime(2018, 2, 3, 19, 27)
-        http_req.set_cached_expiration(url, expiration_dt)
+        http_req.set_cached_expiration(url, expire_on_dt=expiration_dt)
 
         # repeat the request
         mock_requests.get.reset_mock()

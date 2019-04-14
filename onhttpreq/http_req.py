@@ -259,7 +259,7 @@ class HTTPReq(object):
                        if (cache_filename is not None) or (cache_in_memory is True)
                        else None)
 
-        if self._cache.version != CURRENT_CACHE_DB_VERSION:
+        if self._cache is not None and self._cache.version != CURRENT_CACHE_DB_VERSION:
             if self._cache.version == 0:
                 migration_instructions = """alter table json_cache rename column json to content;
 alter table json_cache rename column json_bzip2 to content_bzip2;
