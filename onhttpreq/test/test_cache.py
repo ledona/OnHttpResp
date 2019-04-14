@@ -81,7 +81,7 @@ BASE_REF_INFO = {
 
 
 @pytest.mark.parametrize("compressed", [True, False])
-def test_compressed(compressed):
+def test_info(compressed):
     cache = HTTPCache(store_as_compressed=compressed)
     _populate_fake_cache(cache)
 

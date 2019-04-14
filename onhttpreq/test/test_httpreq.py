@@ -5,14 +5,15 @@ from datetime import datetime, timedelta, timezone
 import time
 import json
 import http
+import pytest
 
-from ..http_req import (_HTTPCache, _HTTPCacheContent, HTTPReq, HTTPReqError,
-                        ON_RESPONSE_WAIT_RETRY, ON_RESPONSE_RETURN_WAIT)
+from onhttpreq.cache import HTTPCache, HTTPCacheContent
+from onhttpreq import HTTPReq, HTTPReqError, ON_RESPONSE_WAIT_RETRY, ON_RESPONSE_RETURN_WAIT
 
 
 @pytest.mark.parametrize("store_as_compressed", [False, True])
 def test_cache(store_as_compressed):
-    cache = _HTTPCache(store_as_compressed=store_as_compressed)
+    cache = HTTPCache(store_as_compressed=store_as_compressed)
     assert cache.get("url") is None
     assert cache.get_json("url") is None
 
@@ -26,8 +27,8 @@ def test_cache(store_as_compressed):
     assert ref_json == test_json
 
     session = cache.sessionmaker()
-    cache_result = session.query(_HTTPCacheContent) \
-                          .filter(_HTTPCacheContent.url == "url") \
+    cache_result = session.query(HTTPCacheContent) \
+                          .filter(HTTPCacheContent.url == "url") \
                           .one_or_none()
     assert (cache_result.content_bzip2 is not None) == store_as_compressed
     assert (cache_result.content is not None) != store_as_compressed
@@ -43,14 +44,14 @@ def test_expire():
     _after_expiration = datetime(2017, 10, 22, 5, 55)
     url = "url1"
 
-    cache = _HTTPCache(dont_expire=True)
+    cache = HTTPCache(dont_expire=True)
     cache.set(url, '[]', expire_on_dt=_expire_on)
     with freeze_time(_before_expiration):
         assert cache.get(url) is not None
     with freeze_time(_after_expiration):
         assert cache.get(url) is not None
 
-    cache = _HTTPCache(dont_expire=False)
+    cache = HTTPCache(dont_expire=False)
     cache.set(url, '[]', expire_on_dt=_expire_on)
     with freeze_time(_before_expiration):
         assert cache.get(url) is not None

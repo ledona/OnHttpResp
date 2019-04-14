@@ -81,20 +81,6 @@ class HTTPReq(object):
                        if (cache_filename is not None) or (cache_in_memory is True)
                        else None)
 
-        if self._cache is not None and self._cache.version != CURRENT_CACHE_DB_VERSION:
-            if self._cache.version == 0:
-                migration_instructions = """alter table json_cache rename column json to content;
-alter table json_cache rename column json_bzip2 to content_bzip2;
-alter table json_cache rename to content_cache;
-pragma user_version = 1;
-"""
-                raise CacheOutOfDate("Cache is out of date. Cache at '{}' has version '{}'. Current version is '{}'. To migrate execute the following:\n{}"
-                                     .format(cache_filename, self._cache.version, CURRENT_CACHE_DB_VERSION,
-                                             migration_instructions))
-            else:
-                # should not get here
-                raise ValueError("cache_migrate must be True, False or 'PROMPT'")
-
         self._requests_kwargs = requests_kwargs or {}
         self._request_timeout = request_timeout
         self._retries = http_retries
