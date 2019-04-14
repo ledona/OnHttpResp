@@ -7,7 +7,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import func
 import os
 from datetime import datetime
-
+from sqlalchemy.sql.expression import case
 
 _SQLAlchemyORMBase = declarative_base()
 
@@ -87,14 +87,20 @@ pragma user_version = 1;
         session = self.sessionmaker()
         try:
             result['n'] = session.query(HTTPCacheContent.url).count()
-            (result['earlier_dt'], result['latest_dt'], result['expirable'],
+            (result['earlier_dt'], result['latest_dt'], result['n_expirable'],
              result['n_not_compressed'], result['n_compressed']) = \
                 session.query(func.min(HTTPCacheContent.cached_on),
                               func.max(HTTPCacheContent.cached_on),
-                              func.sum(func.IF(HTTPCacheContent.expires_on_dt.isnot(None), 1, 0)),
-                              func.sum(func.IF(HTTPCacheContent.content.isnot(None), 1, 0)),
-                              func.sum(func.IF(HTTPCacheContent.content_bzip2.isnot(None), 1, 0))) \
-                       .one()[0]
+                              func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], 0)),
+                              func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], 0)),
+                              func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], 0))) \
+                       .one()
+
+            if result['n_not_compressed'] is None:
+                result['n_not_compressed'] = 0
+            if result['n_compressed'] is None:
+                result['n_compressed'] = 0
+
         finally:
             session.close()
 
@@ -138,7 +144,7 @@ pragma user_version = 1;
         else:
             return None
 
-    def set(self, url, content, expire_on_dt=None, expire_time_delta=None):
+    def set(self, url, content, expire_on_dt=None, expire_time_delta=None, cached_on=None):
         """
         Use either expire_on_dt or expire_time_delta
 
@@ -158,6 +164,10 @@ pragma user_version = 1;
                 kwarg_data = {'content_bzip2': bz2.compress(data)}
             else:
                 kwarg_data = {'content': content}
+
+            if cached_on is not None:
+                kwarg_data['cached_on'] = cached_on
+
             cache_data = HTTPCacheContent(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
             session.add(cache_data)
             try:

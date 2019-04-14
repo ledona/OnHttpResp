@@ -61,8 +61,35 @@ def test_expire():
         assert ref_result == cache.get(url)
 
 
-def test_info():
-    raise NotImplementedError()
+REF_EARLY_DT = datetime(2019, 4, 6, 18, 50)
+REF_LAST_DT = datetime(2019, 4, 6, 18, 52)
+
+
+def _populate_fake_cache(cache):
+    cache.set('url1', "content", cached_on=REF_EARLY_DT)
+    cache.set('url2', "content", cached_on=REF_EARLY_DT)
+    cache.set('url3', "content", expire_on_dt=datetime.now(), cached_on=REF_LAST_DT)
+
+
+# reference information that applies to compressed and uncompressed test caches
+BASE_REF_INFO = {
+    'n' : 3,
+    'earliest_dt': REF_EARLY_DT,
+    'latest_dt': REF_LAST_DT,
+    'n_expirable': 1
+}
+
+
+@pytest.mark.parametrize("compressed", [True, False])
+def test_compressed(compressed):
+    cache = HTTPCache(store_as_compressed=compressed)
+    _populate_fake_cache(cache)
+
+    info = cache.info
+    ref_info = dict(BASE_REF_INFO)
+    ref_info['n_compressed'] = ref_info['n'] if compressed else 0
+    ref_info['n_not_compressed'] = ref_info['n'] if not compressed else 0
+    assert ref_info == info
 
 
 def test_filter():
