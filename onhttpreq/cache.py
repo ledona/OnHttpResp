@@ -44,7 +44,7 @@ class HTTPCache(object):
     """
     cache http responses to a DB
     """
-    def __init__(self, filename=None, verbose=False, dont_expire=False, store_as_compressed=False):
+    def __init__(self, filename=None, verbose=False, debug=False, dont_expire=False, store_as_compressed=False):
         """
         filename - if None then the DB will be in memory
         store_as_compressed - store in compressed form, and expect the cache to be compressed
@@ -54,7 +54,7 @@ class HTTPCache(object):
         if create_cache and verbose:
             print("Creating cache file '{}'".format(filename))
 
-        self.sessionmaker, engine = create_sessionmaker(filename, verbose=verbose)
+        self.sessionmaker, engine = create_sessionmaker(filename, verbose=debug)
 
         if create_cache:
             _SQLAlchemyORMBase.metadata.create_all(engine)
@@ -111,12 +111,11 @@ pragma user_version = 1;
 
         return result
 
-    def filter(self, url_pattern, dest_cache=None, delete_after_export=False):
+    def filter(self, url_pattern, dest_cache=None, delete=False):
         """
         filter for urls that match the regex
         dest_cache: if not None then update dest_cache to contain content that matches the filter
-        delete_after_export: if filepath is not none, then after creating the new
-          cache remove the urls from this cache
+        delete: remove the urls from this cache
         returns: list of URLs that match the regex
         """
         urls = []
@@ -127,17 +126,17 @@ pragma user_version = 1;
                               .filter(HTTPCacheContent.url.op('GLOB')(url_pattern)) \
                               .all():
                 urls.append(hcc.url)
+                if delete:
+                    session.delete(hcc)
+                    session.flush()
                 if dest_session is not None:
-                    if delete_after_export:
-                        session.delete(hcc)
-                        session.flush()
                     session.expunge(hcc)
                     dest_session.merge(hcc)
 
             if dest_session is not None:
                 dest_session.commit()
-                if delete_after_export:
-                    session.commit()
+            if delete:
+                session.commit()
         finally:
             session.close()
             if dest_session is not None:

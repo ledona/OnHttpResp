@@ -117,27 +117,31 @@ def test_filter(compressed_cache):
     assert {'url1', 'url2'} == set(urls)
 
 
-@pytest.mark.parametrize("delete_after_export", [True, False])
-def test_filter_w_dest(compressed_cache, delete_after_export):
-    dest_cache = HTTPCache(store_as_compressed=True)
-    urls = compressed_cache.filter("url[12]", dest_cache=dest_cache, delete_after_export=delete_after_export)
+@pytest.mark.parametrize("delete, dest",
+                         [(True, True),
+                          (True, False),
+                          (False, True)])
+def test_filter_w_dest(compressed_cache, delete, dest):
+    dest_cache = HTTPCache(store_as_compressed=True) if dest else None
+    urls = compressed_cache.filter("url[12]", dest_cache=dest_cache, delete=delete)
     assert {'url1', 'url2'} == set(urls)
 
-    urls = dest_cache.filter("url[12]")
-    assert {'url1', 'url2'} == set(urls)
-    info = dest_cache.get_info()
-    ref_info = dict(BASE_REF_INFO)
-    ref_info.update({
-        'n': 2,
-        'latest_dt': REF_EARLY_DT,
-        'n_compressed': 2,
-        'n_expirable': 0
-    })
-    assert ref_info == info
+    if dest:
+        urls = dest_cache.filter("url[12]")
+        assert {'url1', 'url2'} == set(urls)
+        info = dest_cache.get_info()
+        ref_info = dict(BASE_REF_INFO)
+        ref_info.update({
+            'n': 2,
+            'latest_dt': REF_EARLY_DT,
+            'n_compressed': 2,
+            'n_expirable': 0
+        })
+        assert ref_info == info
 
     info = compressed_cache.get_info()
     urls = compressed_cache.filter("url[12]")
-    if delete_after_export:
+    if delete:
         assert info['n'] == 1
         assert len(urls) == 0
     else:
