@@ -2,7 +2,7 @@
 import argparse
 from pprint import pprint
 
-from onhttpreq.cache import HTTPCache
+from onhttpreq.cache import HTTPCache, CONFLICT_MODE_SKIP, CONFLICT_MODE_FAIL, CONFLICT_MODE_OVERWRITE
 
 
 def info(args, cache):
@@ -42,14 +42,18 @@ def merge(args, cache):
       print("Info for '{}':".format(args.other_cachefile))
       pprint(info)
 
-   cache.merge(other_cache)
+   merged_urls, conflict_urls = cache.merge(other_cache, conflict_mode=args.conflict)
 
-   print("Merge of '{}' into '{}' complete.".format(args.other_cachefile, args.cachefile))
+   print("Merge of '{}' into '{}' complete. {} urls merged, {} conflicts".format(
+      args.other_cachefile, args.cachefile, len(merged_urls), len(conflict_urls)))
    if args.verbose:
       print("Final info for '{}':".format(args.cachefile))
       info = cache.get_info()
-      print("Info for '{}':".format(args.cachefile))
-      pprint(info)
+
+      print("Merged urls:")
+      print("\n".join(merged_urls))
+      print("\nConflict urls:")
+      print("\n".join(conflict_urls))
 
 
 if __name__ == '__main__':
@@ -74,7 +78,14 @@ if __name__ == '__main__':
 
    merge_parser = func_parsers.add_parser('merge', help="Merge caches")
    merge_parser.set_defaults(func=merge)
-   merge_parser.add_argument("other_cachefile")
+   merge_parser.add_argument("other_cachefile", help="The cache containing the additional content.")
+   merge_parser.add_argument("--conflict", default=CONFLICT_MODE_FAIL,
+                             choices=(CONFLICT_MODE_SKIP, CONFLICT_MODE_FAIL, CONFLICT_MODE_OVERWRITE),
+                             help=("Modes that define how to handle merge conflicts. "
+                                   "{0} - keep the old value. {1} - overwrite with the new value. "
+                                   "{2} - Fail the merge process and exit. Default is '{2}'").format(
+                                      CONFLICT_MODE_SKIP, CONFLICT_MODE_OVERWRITE, CONFLICT_MODE_FAIL))
+
 
    args = parser.parse_args()
    if not hasattr(args, 'func'):

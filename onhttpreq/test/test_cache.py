@@ -5,7 +5,8 @@ from datetime import datetime
 import time
 
 from .. import HTTPReq, HTTPReqError
-from ..cache import HTTPCache, HTTPCacheContent
+from ..cache import (HTTPCache, HTTPCacheContent, CacheMergeConflict,
+                     CONFLICT_MODE_OVERWRITE, CONFLICT_MODE_SKIP, CONFLICT_MODE_FAIL)
 
 
 @pytest.mark.parametrize("store_as_compressed", [False, True])
@@ -163,3 +164,59 @@ def test_merge(compressed_cache):
 
     urls = compressed_cache.filter("url4")
     assert ['url4'] == urls
+
+
+@pytest.fixture(scope='module')
+def merge_cache():
+    cache_ = HTTPCache(store_as_compressed=True)
+    cache_.set('url0', "content Z", cached_on=REF_EARLY_DT)
+    cache_.set('url2', "content X", cached_on=REF_LAST_DT)
+    cache_.set('url3', "content Y", cached_on=REF_LAST_DT)
+    cache_.set('url4', "content D", cached_on=REF_LAST_DT)
+    return cache_
+
+
+@pytest.mark.parametrize("conflict_mode", (CONFLICT_MODE_OVERWRITE, CONFLICT_MODE_SKIP, CONFLICT_MODE_FAIL))
+def test_merge_w_conflict(merge_cache, compressed_cache, conflict_mode):
+    compressed_cache.dont_expire = True
+    test_exception = None
+    try:
+        merged_urls, conflict_urls = compressed_cache.merge(merge_cache, conflict_mode=conflict_mode)
+    except CacheMergeConflict as ex:
+        test_exception = ex
+        pass
+
+    ref_data = {'url1': 'content A'}
+
+    if conflict_mode != CONFLICT_MODE_FAIL:
+        assert {'url0', 'url2', 'url3', 'url4'} == set(merged_urls)
+        assert {'url2', 'url3'} == set(conflict_urls)
+
+        ref_data.update({
+            'url0': 'content Z',
+            'url4': 'content D'
+        })
+        if conflict_mode == CONFLICT_MODE_OVERWRITE:
+            ref_data.update({
+                'url2': 'content X',
+                'url3': 'content Y'
+            })
+        elif conflict_mode == CONFLICT_MODE_SKIP:
+            ref_data.update({
+                'url2': 'content B',
+                'url3': 'content C'
+            })
+        else:
+            raise ValueError("Don't know how to test for conflict_mode '{}'".format(conflict_mode))
+    else:
+        assert test_exception is not None
+        ref_data.update({
+            'url2': 'content B',
+            'url3': 'content C'
+        })
+
+    test_data = {
+        url: compressed_cache.get(url).decode()
+        for url in compressed_cache.filter("*")
+    }
+    assert ref_data == test_data

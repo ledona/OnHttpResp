@@ -12,7 +12,14 @@ from sqlalchemy.sql.expression import case
 _SQLAlchemyORMBase = declarative_base()
 
 
+# cache merge conflict modes
+CONFLICT_MODE_FAIL = 'fail'
+CONFLICT_MODE_SKIP = 'skip'
+CONFLICT_MODE_OVERWRITE = 'overwrite'
+
+
 CURRENT_CACHE_DB_VERSION = 1
+
 
 
 class HTTPCacheContent(_SQLAlchemyORMBase):
@@ -40,6 +47,10 @@ class CacheOutOfDate(Exception):
     pass
 
 
+class CacheMergeConflict(Exception):
+    pass
+
+
 class HTTPCache(object):
     """
     cache http responses to a DB
@@ -50,7 +61,7 @@ class HTTPCache(object):
         store_as_compressed - store in compressed form, and expect the cache to be compressed
         """
         create_cache = filename is None or not os.path.isfile(filename)
-        self._dont_expire = dont_expire
+        self.dont_expire = dont_expire
         if create_cache and verbose:
             print("Creating cache file '{}'".format(filename))
 
@@ -144,17 +155,38 @@ pragma user_version = 1;
 
         return urls
 
-    def merge(self, cache_):
+    def merge(self, cache_, conflict_mode=CONFLICT_MODE_FAIL):
         """
         merge another cache with the contents of this cache
         cache_: the cache to merge into this cache
-        dest_cache: if not none then write then first copy this cache into dest_cache then merge
-          cache_ into that cache
+        conflict_mode:
+           CONFLICT_MODE_FAIL will raise CacheMergeConflict Exception if there is a conflict
+           CONFLICT_MODE_SKIP will do nothing, skiping the merge
+           CONFLICT_MODE_OVERWRITE will overwrite what's in the cache with the merge value
+        returns: list or urls merged, list of conflict urls
         """
+        if conflict_mode not in {CONFLICT_MODE_FAIL, CONFLICT_MODE_SKIP, CONFLICT_MODE_OVERWRITE}:
+            raise ValueError("Invalid conflict mode '{}'".format(conflict_mode))
+
         session = self.sessionmaker()
         src_session = cache_.sessionmaker()
+        urls = []
+        conflict_urls = []
         try:
             for hcc in src_session.query(HTTPCacheContent).all():
+                urls.append(hcc.url)
+                existing_cache_entry = session.query(HTTPCacheContent.url) \
+                                              .filter(HTTPCacheContent.url == hcc.url) \
+                                              .one_or_none()
+                if existing_cache_entry is not None:
+                    conflict_urls.append(hcc.url)
+                    if conflict_mode == CONFLICT_MODE_FAIL:
+                        raise CacheMergeConflict("URL '{}' already exists".format(hcc.url))
+                    elif conflict_mode == CONFLICT_MODE_SKIP:
+                        # leave the original cache as is
+                        continue
+
+                # either this is a conflict and we are in overwrite mode or no conflict
                 src_session.expunge(hcc)
                 session.merge(hcc)
             session.commit()
@@ -162,7 +194,10 @@ pragma user_version = 1;
             session.close()
             src_session.close()
 
+        return urls, conflict_urls
+
     def get(self, url):
+        """ return the content for url. returns None if the url is not in the cache """
         session = self.sessionmaker()
         try:
             cache_result = session.query(HTTPCacheContent) \
@@ -171,7 +206,7 @@ pragma user_version = 1;
 
             # if expiration is enabled then don't return anything that is expired
             if cache_result is not None and \
-               not self._dont_expire and \
+               not self.dont_expire and \
                cache_result.expire_on_dt is not None and \
                cache_result.expire_on_dt < datetime.utcnow():
                 cache_result = None
