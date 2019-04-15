@@ -119,16 +119,49 @@ pragma user_version = 1;
           cache remove the urls from this cache
         returns: list of URLs that match the regex
         """
-        raise NotImplementedError()
+        urls = []
+        session = self.sessionmaker()
+        dest_session = dest_cache.sessionmaker() if dest_cache is not None else None
+        try:
+            for hcc in session.query(HTTPCacheContent) \
+                              .filter(HTTPCacheContent.url.op('GLOB')(url_pattern)) \
+                              .all():
+                urls.append(hcc.url)
+                if dest_session is not None:
+                    if delete_after_export:
+                        session.delete(hcc)
+                        session.flush()
+                    session.expunge(hcc)
+                    dest_session.merge(hcc)
 
-    def merge(self, cache_, dest_cache=None):
+            if dest_session is not None:
+                dest_session.commit()
+                if delete_after_export:
+                    session.commit()
+        finally:
+            session.close()
+            if dest_session is not None:
+                dest_session.close()
+
+        return urls
+
+    def merge(self, cache_):
         """
         merge another cache with the contents of this cache
         cache_: the cache to merge into this cache
         dest_cache: if not none then write then first copy this cache into dest_cache then merge
           cache_ into that cache
         """
-        raise NotImplementedError()
+        session = self.sessionmaker()
+        src_session = cache_.sessionmaker()
+        try:
+            for hcc in src_session.query(HTTPCacheContent).all():
+                src_session.expunge(hcc)
+                session.merge(hcc)
+            session.commit()
+        finally:
+            session.close()
+            src_session.close()
 
     def get(self, url):
         session = self.sessionmaker()

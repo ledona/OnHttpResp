@@ -114,60 +114,48 @@ def test_info_w_regex(compressed_cache):
 
 def test_filter(compressed_cache):
     urls = compressed_cache.filter("url[12]")
-    assert {'url1', 'url2'} == urls
+    assert {'url1', 'url2'} == set(urls)
 
 
 @pytest.mark.parametrize("delete_after_export", [True, False])
 def test_filter_w_dest(compressed_cache, delete_after_export):
     dest_cache = HTTPCache(store_as_compressed=True)
     urls = compressed_cache.filter("url[12]", dest_cache=dest_cache, delete_after_export=delete_after_export)
-    assert {'url1', 'url2'} == urls
+    assert {'url1', 'url2'} == set(urls)
 
     urls = dest_cache.filter("url[12]")
-    assert {'url1', 'url2'} == urls
+    assert {'url1', 'url2'} == set(urls)
     info = dest_cache.get_info()
-    ref_info = {
+    ref_info = dict(BASE_REF_INFO)
+    ref_info.update({
         'n': 2,
-        'earlier_dt': REF_EARLY_DT,
-        'latest_dt': REF_LAST_DT,
-        'n_compressed': 2
-    }
+        'latest_dt': REF_EARLY_DT,
+        'n_compressed': 2,
+        'n_expirable': 0
+    })
     assert ref_info == info
 
     info = compressed_cache.get_info()
+    urls = compressed_cache.filter("url[12]")
     if delete_after_export:
         assert info['n'] == 1
-        urls = compressed_cache.filter("url[12]")
-        assert {'url1', 'url2'} == urls
+        assert len(urls) == 0
     else:
         assert info['n'] == 3
-        urls = compressed_cache.filter("url[12]")
-        assert len(urls) == 0
+        assert {'url1', 'url2'} == set(urls)
 
 
-@pytest.mark.parametrize("different_dest", [True, False])
-def test_merge(compressed_cache, different_dest):
+def test_merge(compressed_cache):
     cache_ = HTTPCache(store_as_compressed=True)
     cache_.set('url4', "content D", cached_on=REF_LAST_DT)
 
-    if different_dest:
-        dest_cache = HTTPCache(store_as_compressed=True)
-        urls_1 = compressed_cache.filter(".*")
-        compressed_cache.merge(cache_, dest_cache=dest_cache)
+    compressed_cache.merge(cache_)
 
-        # make sure compressed_cache is not changed
-        urls_2 = compressed_cache.filter(".*")
-        assert urls_1 == urls_2
-    else:
-        compressed_cache.merge(cache_)
-        dest_cache = compressed_cache
-
-    # dest cache always looks the same
-    info = dest_cache.get_info()
+    info = compressed_cache.get_info()
     ref_info = dict(BASE_REF_INFO)
     ref_info['n'] += 1
     ref_info['n_compressed'] = ref_info['n']
     assert ref_info == info
 
-    urls = dest_cache.filter("url4")
+    urls = compressed_cache.filter("url4")
     assert ['url4'] == urls
