@@ -66,17 +66,19 @@ REF_LAST_DT = datetime(2019, 4, 6, 18, 52)
 
 
 def _populate_fake_cache(cache):
-    cache.set('url1', "content", cached_on=REF_EARLY_DT)
-    cache.set('url2', "content", cached_on=REF_EARLY_DT)
-    cache.set('url3', "content", expire_on_dt=datetime.now(), cached_on=REF_LAST_DT)
+    cache.set('url1', "content A", cached_on=REF_EARLY_DT)
+    cache.set('url2', "content B", cached_on=REF_EARLY_DT)
+    cache.set('url3', "content C", expire_on_dt=datetime.now(), cached_on=REF_LAST_DT)
 
 
 # reference information that applies to compressed and uncompressed test caches
 BASE_REF_INFO = {
     'n' : 3,
-    'earliest_dt': REF_EARLY_DT,
+    'earlier_dt': REF_EARLY_DT,
     'latest_dt': REF_LAST_DT,
-    'n_expirable': 1
+    'n_expirable': 1,
+    'n_compressed': 0,
+    'n_not_compressed': 0
 }
 
 
@@ -85,16 +87,87 @@ def test_info(compressed):
     cache = HTTPCache(store_as_compressed=compressed)
     _populate_fake_cache(cache)
 
-    info = cache.info
+    info = cache.get_info()
     ref_info = dict(BASE_REF_INFO)
     ref_info['n_compressed'] = ref_info['n'] if compressed else 0
     ref_info['n_not_compressed'] = ref_info['n'] if not compressed else 0
     assert ref_info == info
 
+@pytest.fixture
+def compressed_cache():
+    cache = HTTPCache(store_as_compressed=True)
+    _populate_fake_cache(cache)
+    return cache
 
-def test_filter():
-    raise NotImplementedError()
+
+def test_info_w_regex(compressed_cache):
+    info = compressed_cache.get_info(url_pattern="url[12]")
+    ref_info = dict(BASE_REF_INFO)
+    ref_info.update({
+        'n': 2,
+        'latest_dt': REF_EARLY_DT,
+        'n_compressed': 2,
+        'n_expirable': 0
+    })
+    assert ref_info == info
 
 
-def test_merge():
-    raise NotImplementedError()
+def test_filter(compressed_cache):
+    urls = compressed_cache.filter("url[12]")
+    assert {'url1', 'url2'} == urls
+
+
+@pytest.mark.parametrize("delete_after_export", [True, False])
+def test_filter_w_dest(compressed_cache, delete_after_export):
+    dest_cache = HTTPCache(store_as_compressed=True)
+    urls = compressed_cache.filter("url[12]", dest_cache=dest_cache, delete_after_export=delete_after_export)
+    assert {'url1', 'url2'} == urls
+
+    urls = dest_cache.filter("url[12]")
+    assert {'url1', 'url2'} == urls
+    info = dest_cache.get_info()
+    ref_info = {
+        'n': 2,
+        'earlier_dt': REF_EARLY_DT,
+        'latest_dt': REF_LAST_DT,
+        'n_compressed': 2
+    }
+    assert ref_info == info
+
+    info = compressed_cache.get_info()
+    if delete_after_export:
+        assert info['n'] == 1
+        urls = compressed_cache.filter("url[12]")
+        assert {'url1', 'url2'} == urls
+    else:
+        assert info['n'] == 3
+        urls = compressed_cache.filter("url[12]")
+        assert len(urls) == 0
+
+
+@pytest.mark.parametrize("different_dest", [True, False])
+def test_merge(compressed_cache, different_dest):
+    cache_ = HTTPCache(store_as_compressed=True)
+    cache_.set('url4', "content D", cached_on=REF_LAST_DT)
+
+    if different_dest:
+        dest_cache = HTTPCache(store_as_compressed=True)
+        urls_1 = compressed_cache.filter(".*")
+        compressed_cache.merge(cache_, dest_cache=dest_cache)
+
+        # make sure compressed_cache is not changed
+        urls_2 = compressed_cache.filter(".*")
+        assert urls_1 == urls_2
+    else:
+        compressed_cache.merge(cache_)
+        dest_cache = compressed_cache
+
+    # dest cache always looks the same
+    info = dest_cache.get_info()
+    ref_info = dict(BASE_REF_INFO)
+    ref_info['n'] += 1
+    ref_info['n_compressed'] = ref_info['n']
+    assert ref_info == info
+
+    urls = dest_cache.filter("url4")
+    assert ['url4'] == urls

@@ -80,21 +80,26 @@ pragma user_version = 1;
 
         self.store_as_compressed = store_as_compressed
 
-    @property
-    def info(self):
-        """ return a dict with descriptive information for the cache """
+    def get_info(self, url_pattern=None):
+        """
+        url_pattern: glob pattern to filter urls
+        return a dict with descriptive information for the cache """
         result = {}
+        filters = []
+        if url_pattern is not None:
+            filters.append(HTTPCacheContent.url.op('GLOB')(url_pattern))
         session = self.sessionmaker()
         try:
-            result['n'] = session.query(HTTPCacheContent.url).count()
+            result['n'] = session.query(HTTPCacheContent.url).filter(*filters).count()
             (result['earlier_dt'], result['latest_dt'], result['n_expirable'],
              result['n_not_compressed'], result['n_compressed']) = \
-                session.query(func.min(HTTPCacheContent.cached_on),
-                              func.max(HTTPCacheContent.cached_on),
-                              func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], 0)),
-                              func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], 0)),
-                              func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], 0))) \
-                       .one()
+                 session.query(func.min(HTTPCacheContent.cached_on),
+                                  func.max(HTTPCacheContent.cached_on),
+                                  func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], else_=0)),
+                                  func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], else_=0)),
+                                  func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], else_=0))) \
+                        .filter(*filters) \
+                        .one()
 
             if result['n_not_compressed'] is None:
                 result['n_not_compressed'] = 0
@@ -106,10 +111,23 @@ pragma user_version = 1;
 
         return result
 
-    def filter(self, url_filter, filepath=None, delete_after_export=False):
+    def filter(self, url_pattern, dest_cache=None, delete_after_export=False):
+        """
+        filter for urls that match the regex
+        dest_cache: if not None then update dest_cache to contain content that matches the filter
+        delete_after_export: if filepath is not none, then after creating the new
+          cache remove the urls from this cache
+        returns: list of URLs that match the regex
+        """
         raise NotImplementedError()
 
-    def merge(self, filepath, new_filepath=None):
+    def merge(self, cache_, dest_cache=None):
+        """
+        merge another cache with the contents of this cache
+        cache_: the cache to merge into this cache
+        dest_cache: if not none then write then first copy this cache into dest_cache then merge
+          cache_ into that cache
+        """
         raise NotImplementedError()
 
     def get(self, url):
