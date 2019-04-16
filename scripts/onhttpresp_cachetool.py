@@ -14,7 +14,9 @@ def info(args, cache):
 def filter_(args, cache):
    if args.dest_cachefile is not None:
       if os.path.isfile(args.dest_cachefile):
-         raise ValueError("Cache file '{}' already exists!".format(args.cachefile))
+         if input("Cache file '{}' already exists! Add to this cache? ['Yes' to add to the existing cache]: "
+                  .format(args.cachefile)) != "Yes":
+            raise ValueError("Dest cache file exists!")
       dest_cache = HTTPCache(filename=args.dest_cachefile, verbose=args.verbose, debug=args.debug,
                              dont_expire=True, store_as_compressed=args.compressed)
    else:
@@ -38,7 +40,7 @@ def filter_(args, cache):
       print("{} urls found".format(len(urls)))
 
    if dest_cache:
-      print("New cache with content for urls is now at '{}'".format(args.dest_cachefile))
+      print("Cache with content for urls is now at '{}'".format(args.dest_cachefile))
       if args.verbose:
          print("New cache info:")
          info = dest_cache.get_info()
