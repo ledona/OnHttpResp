@@ -11,5 +11,6 @@ setup(
         'requests',
         'sqlalchemy',
         'pytz',
+        'dateutil'
     )
 )

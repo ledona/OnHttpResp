@@ -2,6 +2,7 @@ tqdm
 requests
 sqlalchemy
 pytz
+dateutil
 
 # for testing
 pytest
