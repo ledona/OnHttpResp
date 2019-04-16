@@ -91,24 +91,29 @@ pragma user_version = 1;
 
         self.store_as_compressed = store_as_compressed
 
-    def get_info(self, url_pattern=None):
+    def get_info(self, url_glob=None, dt_range=None):
         """
-        url_pattern: glob pattern to filter urls
+        url_glob: glob pattern to filter urls
         return a dict with descriptive information for the cache """
         result = {}
         filters = []
-        if url_pattern is not None:
-            filters.append(HTTPCacheContent.url.op('GLOB')(url_pattern))
+        if url_glob is not None:
+            filters.append(HTTPCacheContent.url.op('GLOB')(url_glob))
+        if dt_range is not None:
+            if dt_range[0] is not None:
+                filters.append(HTTPCacheContent.cached_on >= dt_range[0])
+            if dt_range[1] is not None:
+                filters.append(HTTPCacheContent.cached_on < dt_range[1])
         session = self.sessionmaker()
         try:
             result['n'] = session.query(HTTPCacheContent.url).filter(*filters).count()
-            (result['earlier_dt'], result['latest_dt'], result['n_expirable'],
+            (result['earliest_dt'], result['latest_dt'], result['n_expirable'],
              result['n_not_compressed'], result['n_compressed']) = \
                  session.query(func.min(HTTPCacheContent.cached_on),
-                                  func.max(HTTPCacheContent.cached_on),
-                                  func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], else_=0)),
-                                  func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], else_=0)),
-                                  func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], else_=0))) \
+                               func.max(HTTPCacheContent.cached_on),
+                               func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], else_=0)),
+                               func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], else_=0)),
+                               func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], else_=0))) \
                         .filter(*filters) \
                         .one()
 
@@ -122,20 +127,35 @@ pragma user_version = 1;
 
         return result
 
-    def filter(self, url_pattern, dest_cache=None, delete=False):
+    def filter(self, url_glob=None, dt_range=None, dest_cache=None, delete=False):
         """
-        filter for urls that match the regex
+        filter for urls that match the regex. A url glob pattern or dt range is required
+
         dest_cache: if not None then update dest_cache to contain content that matches the filter
         delete: remove the urls from this cache
+        dt_range: tuple of (start datetime, end datetime). Content will be filtered inclusive of the
+           start datetime and exclusive of the end datetime. One datetime can be None indicating
+           all content prior to end or after start
+
         returns: list of URLs that match the regex
         """
+        if (url_glob is None) and (dt_range is None):
+            raise ValueError("url_glob or dt_range must be not None")
+
         urls = []
         session = self.sessionmaker()
         dest_session = dest_cache.sessionmaker() if dest_cache is not None else None
         try:
-            for hcc in session.query(HTTPCacheContent) \
-                              .filter(HTTPCacheContent.url.op('GLOB')(url_pattern)) \
-                              .all():
+            filters = []
+            if url_glob is not None:
+                filters.append(HTTPCacheContent.url.op('GLOB')(url_glob))
+            if dt_range is not None:
+                if dt_range[0] is not None:
+                    filters.append(HTTPCacheContent.cached_on >= dt_range[0])
+                if dt_range[1] is not None:
+                    filters.append(HTTPCacheContent.cached_on < dt_range[1])
+
+            for hcc in session.query(HTTPCacheContent).filter(*filters).all():
                 urls.append(hcc.url)
                 if delete:
                     session.delete(hcc)

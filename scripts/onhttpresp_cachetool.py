@@ -1,20 +1,36 @@
 #!/usr/bin/env python
 import argparse
 from pprint import pprint
+from dateutil import parser as du_parser
+import os
 
 from onhttpreq.cache import HTTPCache, CONFLICT_MODE_SKIP, CONFLICT_MODE_FAIL, CONFLICT_MODE_OVERWRITE
 
 
 def info(args, cache):
-   pprint(cache.get_info(url_pattern=args.url))
+   pprint(cache.get_info(url_glob=args.url))
 
 
 def filter_(args, cache):
-   dest_cache = (HTTPCache(filename=args.dest_cachefile, verbose=args.verbose, debug=args.debug,
-                           dont_expire=True, store_as_compressed=args.compressed)
-                 if args.dest_cachefile is not None else None)
+   if args.dest_cachefile is not None:
+      if os.path.isfile(args.dest_cachefile):
+         raise ValueError("Cache file '{}' already exists!".format(args.cachefile))
+      dest_cache = HTTPCache(filename=args.dest_cachefile, verbose=args.verbose, debug=args.debug,
+                             dont_expire=True, store_as_compressed=args.compressed)
+   else:
+      dest_cache = None
 
-   urls = cache.filter(args.url, dest_cache=dest_cache, delete=args.delete)
+   if (args.dt_start is not None) or (args.dt_end is not None):
+      dt_range = (du_parser.parse(args.dt_start) if args.dt_start is not None else None), \
+         (du_parser.parse(args.dt_end) if args.dt_end is not None else None)
+   else:
+      dt_range = None
+
+   if (dt_range is None) and args.url is None:
+      raise ValueError("--url_blog, --dt_start or --dt_end must be specified")
+
+   urls = cache.filter(url_glob=args.url, dt_range=dt_range, dest_cache=dest_cache, delete=args.delete)
+
    if args.verbose:
       print("Filter found the following {} urls:".format(len(urls)))
       print("\n".join(urls))
@@ -30,7 +46,15 @@ def filter_(args, cache):
 
 
 def merge(args, cache):
-   other_cache = HTTPCache(filename=args.dest_cachefile, verbose=args.verbose, debug=args.debug,
+   """
+   merge a cache into this cache
+
+   cache - the dest cache that data will be merged to
+   """
+   if not os.path.isfile(args.other_cachefile):
+      raise FileNotFoundError("Cache file '{}' not found!".format(args.cachefile))
+
+   other_cache = HTTPCache(filename=args.other_cachefile, verbose=args.verbose, debug=args.debug,
                            dont_expire=True, store_as_compressed=args.compressed)
 
    if args.verbose:
@@ -44,7 +68,7 @@ def merge(args, cache):
 
    merged_urls, conflict_urls = cache.merge(other_cache, conflict_mode=args.conflict)
 
-   print("Merge of '{}' into '{}' complete. {} urls merged, {} conflicts".format(
+   print("Merge of '{}' into '{}' complete.\n{} urls merged\n{} conflicts".format(
       args.other_cachefile, args.cachefile, len(merged_urls), len(conflict_urls)))
    if args.verbose:
       print("Final info for '{}':".format(args.cachefile))
@@ -54,6 +78,12 @@ def merge(args, cache):
       print("\n".join(merged_urls))
       print("\nConflict urls:")
       print("\n".join(conflict_urls))
+
+
+def get(args, cache):
+   content = cache.get(args.url)
+   print(content.decode())
+   print("\n")
 
 
 if __name__ == '__main__':
@@ -72,6 +102,8 @@ if __name__ == '__main__':
    filter_parser = func_parsers.add_parser('filter', help="Filter the cache")
    filter_parser.set_defaults(func=filter_)
    filter_parser.add_argument("--url", help="A url pattern to filter for. Supports glob syntax")
+   filter_parser.add_argument("--dt_start", help="Start datetime for filter (inclusive). Format YYYYMMDD HHMMSS")
+   filter_parser.add_argument("--dt_end", help="End datetime for filter (exclusive). Format YYYYMMDD HHMMSS")
    filter_parser.add_argument("--dest_cachefile", help="Export data that matches the filter to a new cache at this path")
    filter_parser.add_argument("--delete", action="store_true", default=False,
                               help="Delete urls that match the filter")
@@ -86,10 +118,17 @@ if __name__ == '__main__':
                                    "{2} - Fail the merge process and exit. Default is '{2}'").format(
                                       CONFLICT_MODE_SKIP, CONFLICT_MODE_OVERWRITE, CONFLICT_MODE_FAIL))
 
+   merge_parser = func_parsers.add_parser('get', help="Get content")
+   merge_parser.set_defaults(func=get)
+   merge_parser.add_argument("url", help="A url to retrieve from the cache")
 
    args = parser.parse_args()
    if not hasattr(args, 'func'):
       parser.error("Nothing to do! An operation is required!")
+
+   if not os.path.isfile(args.cachefile):
+      parser.error("Cache file '{}' not found!".format(args.cachefile))
+
    cache = HTTPCache(filename=args.cachefile, verbose=args.verbose, debug=args.debug,
                      dont_expire=True, store_as_compressed=args.compressed)
    print("working...")

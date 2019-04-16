@@ -3,6 +3,7 @@ import pytest
 import json
 from datetime import datetime
 import time
+from datetime import timedelta
 
 from .. import HTTPReq, HTTPReqError
 from ..cache import (HTTPCache, HTTPCacheContent, CacheMergeConflict,
@@ -63,19 +64,20 @@ def test_expire():
 
 
 REF_EARLY_DT = datetime(2019, 4, 6, 18, 50)
-REF_LAST_DT = datetime(2019, 4, 6, 18, 52)
+REF_MID_DT = datetime(2019, 4, 7, 18, 51)
+REF_LAST_DT = datetime(2019, 4, 8, 18, 52)
 
 
 def _populate_fake_cache(cache):
     cache.set('url1', "content A", cached_on=REF_EARLY_DT)
-    cache.set('url2', "content B", cached_on=REF_EARLY_DT)
+    cache.set('url2', "content B", cached_on=REF_MID_DT)
     cache.set('url3', "content C", expire_on_dt=datetime.now(), cached_on=REF_LAST_DT)
 
 
 # reference information that applies to compressed and uncompressed test caches
 BASE_REF_INFO = {
     'n' : 3,
-    'earlier_dt': REF_EARLY_DT,
+    'earliest_dt': REF_EARLY_DT,
     'latest_dt': REF_LAST_DT,
     'n_expirable': 1,
     'n_compressed': 0,
@@ -101,30 +103,41 @@ def compressed_cache():
     return cache
 
 
-def test_info_w_regex(compressed_cache):
-    info = compressed_cache.get_info(url_pattern="url[12]")
+@pytest.mark.parametrize("filter_kwargs, ref_urls, ref_info_update", [
+    ([{'url_glob': 'url[13]'},
+      {'url1', 'url3'}, {}]),
+    ([{'dt_range': (None, REF_MID_DT)},
+      {'url1'}, {'latest_dt': REF_EARLY_DT, 'n_expirable': 0}]),
+    ([{'dt_range': (REF_MID_DT, None)},
+      {'url2', 'url3'}, {'earliest_dt': REF_MID_DT}]),
+    ([{'dt_range': (REF_MID_DT, None), 'url_glob': '*2'},
+      {'url2'}, {'earliest_dt': REF_MID_DT, 'latest_dt': REF_MID_DT, 'n_expirable': 0}]),
+    ([{'dt_range': (REF_EARLY_DT + timedelta(minutes=1), REF_LAST_DT)},
+      {'url2'}, {'earliest_dt': REF_MID_DT, 'latest_dt': REF_MID_DT, 'n_expirable': 0}])
+])
+def test_filter(compressed_cache, filter_kwargs, ref_urls, ref_info_update):
+    urls = compressed_cache.filter(**filter_kwargs)
+    assert ref_urls == set(urls)
+
+    info = compressed_cache.get_info(**filter_kwargs)
     ref_info = dict(BASE_REF_INFO)
-    ref_info.update({
-        'n': 2,
-        'latest_dt': REF_EARLY_DT,
-        'n_compressed': 2,
-        'n_expirable': 0
-    })
+    ref_info['n'] = len(urls)
+    ref_info['n_compressed'] = len(urls)
+    ref_info.update(ref_info_update)
+
     assert ref_info == info
 
 
-def test_filter(compressed_cache):
-    urls = compressed_cache.filter("url[12]")
-    assert {'url1', 'url2'} == set(urls)
-
-
-@pytest.mark.parametrize("delete, dest",
-                         [(True, True),
-                          (True, False),
-                          (False, True)])
-def test_filter_w_dest(compressed_cache, delete, dest):
+@pytest.mark.parametrize("delete, dest, filter_kwargs", [
+    (True, True, {'url_glob': "url[12]"}),
+    (True, False, {'url_glob': "url[12]"}),
+    (False, True, {'url_glob': "url[12]"}),
+    (False, True, {'dt_range': (None, REF_MID_DT + timedelta(minutes=1))}),
+    (False, True, {'dt_range': (REF_EARLY_DT, REF_MID_DT + timedelta(minutes=1))}),
+])
+def test_filter_w_dest(compressed_cache, delete, dest, filter_kwargs):
     dest_cache = HTTPCache(store_as_compressed=True) if dest else None
-    urls = compressed_cache.filter("url[12]", dest_cache=dest_cache, delete=delete)
+    urls = compressed_cache.filter(dest_cache=dest_cache, delete=delete, **filter_kwargs)
     assert {'url1', 'url2'} == set(urls)
 
     if dest:
@@ -134,7 +147,7 @@ def test_filter_w_dest(compressed_cache, delete, dest):
         ref_info = dict(BASE_REF_INFO)
         ref_info.update({
             'n': 2,
-            'latest_dt': REF_EARLY_DT,
+            'latest_dt': REF_MID_DT,
             'n_compressed': 2,
             'n_expirable': 0
         })
