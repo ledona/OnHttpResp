@@ -4,18 +4,18 @@ Shared HTTP requester for API requests
 from datetime import datetime, timedelta
 import time
 import http
-import tqdm
-import requests
 import os
 import math
 import warnings
+
+import tqdm
+import requests
 
 from .cache import HTTPCache
 
 
 class CacheOnlyError(Exception):
     """ raised if cache_only is enabled and a url is not in the cache """
-    pass
 
 
 class HTTPReqError(Exception):
@@ -32,8 +32,10 @@ class HTTPReqError(Exception):
                     self.http_resp.text if self.http_resp is not None else None)
 
 
+# TODO: this should be an enum
 ON_RESPONSE_WAIT_RETRY = "wait_retry"
 ON_RESPONSE_RETURN_WAIT = "return_wait"
+ON_RESPONSE_FAIL = "fail"
 
 
 class HTTPReq(object):
@@ -62,6 +64,7 @@ class HTTPReq(object):
             if this is used with progress then duration will be rounded up to the nearest second
           ON_RESPONSE_RETURN_WAIT: 'duration' - return the response to the caller but do not execute any new
              requests until the duration has expired (useful for throttling)
+          ON_RESPONSE_FAIL: 'reason' - Raise a failure exception, include the reason in the exception
         """
         assert not ((cache_filename is not None) and cache_in_memory), \
             "caching can't both be in memory and to a file"
@@ -156,6 +159,8 @@ class HTTPReq(object):
                 self._return_wait_cmd = dict(res[1])
                 self._return_wait_cmd['started_waiting_dt'] = datetime.now()
                 return True
+            elif res[0] == ON_RESPONSE_FAIL:
+                raise HTTPReqError(http_response=get_response, res[1])
             else:
                 raise ValueError("on_response returned an unknown command. {}".format(res))
         return False
