@@ -160,7 +160,7 @@ class HTTPReq(object):
                 self._return_wait_cmd['started_waiting_dt'] = datetime.now()
                 return True
             elif res[0] == ON_RESPONSE_FAIL:
-                raise HTTPReqError(http_response=get_response, res[1])
+                raise HTTPReqError(http_response=get_response, msg=res[1])
             else:
                 raise ValueError("on_response returned an unknown command. {}".format(res))
         return False
