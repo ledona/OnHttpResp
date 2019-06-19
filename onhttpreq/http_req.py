@@ -4,7 +4,6 @@ Shared HTTP requester for API requests
 from datetime import datetime, timedelta
 import time
 import http
-import os
 import math
 import warnings
 
@@ -38,7 +37,8 @@ ON_RESPONSE_RETURN_WAIT = "return_wait"
 ON_RESPONSE_FAIL = "fail"
 
 
-class HTTPReq(object):
+# TODO: on_response should also take a URL arg
+class HTTPReq:
     def __init__(self, verbose=False, progress=False,
                  http_retries=2, requests_kwargs=None,
                  on_response=None, request_timeout=None,
@@ -142,7 +142,7 @@ class HTTPReq(object):
         elif duration > 0:
             time.sleep(duration)
 
-    def _process_on_response(self, get_response):
+    def _process_on_response(self, get_response, url):
         """
         returns - true if the retry loop should be broken
         raises - ValueError if the on_response method returned an invalid result
@@ -220,9 +220,9 @@ class HTTPReq(object):
             if cache_fail_func is not None:
                 cache_fail_func()
 
-            self.__tries = 0
-            while self.__tries < self._retries + 1:
-                self.__tries += 1
+            self._tries = 0
+            while self._tries < self._retries + 1:
+                self._tries += 1
                 self.http_requests += 1
                 try:
                     r = requests.get(url=url, timeout=self._request_timeout, **self._requests_kwargs)
@@ -232,7 +232,7 @@ class HTTPReq(object):
                         print("HTTPReq request timed out... {}".format(ex))
 
                 if self.verbose and r is not None:
-                    print("HTTPReq response for attempt {}/{} code: {}".format(self.__tries + 1,
+                    print("HTTPReq response for attempt {}/{} code: {}".format(self._tries + 1,
                                                                                self._retries,
                                                                                r.status_code))
                     print("HTTPReq Headers: {}".format(r.headers))
@@ -240,20 +240,20 @@ class HTTPReq(object):
                     print(r.text)
 
                 if self._on_response is not None:
-                    if self._process_on_response(r):
+                    if self._process_on_response(r, url):
                         break
                 elif r is not None and r.status_code == http.client.OK:
                     break
 
                 if self.verbose:
-                    print("Retry #{}".format(self.__tries + 1))
+                    print("Retry #{}".format(self._tries + 1))
 
-            self.total_retries += max(0, self.__tries - 1)
+            self.total_retries += max(0, self._tries - 1)
             self._last_result_details['http_attempts'] += 1
 
             if (r is None) or (r.status_code != http.client.OK):
                 msg = "Failed to retrieve '{}' after {} attempts. Skipping" \
-                      .format(url, self.__tries + 1)
+                      .format(url, self._tries + 1)
                 self._last_result_details['error'] = (msg, r or 'timedout')
 
                 if self.progress:
