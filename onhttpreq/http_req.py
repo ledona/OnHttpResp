@@ -152,7 +152,7 @@ class HTTPReq:
             return True
         else:
             if res[0] == ON_RESPONSE_WAIT_RETRY:
-                if self.__tries < self._retries + 1:
+                if self._tries < self._retries + 1:
                     # only makes sense to wait if there is another retry available
                     self._wait(**res[1])
             elif res[0] == ON_RESPONSE_RETURN_WAIT:
