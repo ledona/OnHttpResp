@@ -1,13 +1,17 @@
 import bz2
 import json
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.schema import Index
-import sqlalchemy
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import func
 import os
 from datetime import datetime
+
+from sqlalchemy import func
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.schema import Index
 from sqlalchemy.sql.expression import case
+import sqlalchemy
+
+from .exception import OnHttpReqException
+
 
 _SQLAlchemyORMBase = declarative_base()
 
@@ -19,7 +23,6 @@ CONFLICT_MODE_OVERWRITE = 'overwrite'
 
 
 CURRENT_CACHE_DB_VERSION = 1
-
 
 
 class HTTPCacheContent(_SQLAlchemyORMBase):
@@ -43,15 +46,26 @@ def create_sessionmaker(filename, verbose=False):
     return sessionmaker(bind=engine), engine
 
 
-class CacheOutOfDate(Exception):
+class CacheOutOfDate(OnHttpReqException):
     pass
 
 
-class CacheMergeConflict(Exception):
+class CacheMergeConflict(OnHttpReqException):
     pass
 
 
-class HTTPCache(object):
+class JSONParsingException(OnHttpReqException):
+    """
+    raised if there is an error parsing json to a dict
+
+    json_text attribute will have the json that failed to parse
+    """
+    def __init__(self, msg, json_text: bytes):
+        super().__init__(msg)
+        self.json_text = json_text.decode('utf-8')
+
+
+class HTTPCache:
     """
     cache http responses to a DB
     """
@@ -244,8 +258,12 @@ pragma user_version = 1;
     def get_json(self, url):
         text = self.get(url)
         if text is not None:
-            json_result = json.loads(text)
-            return json_result
+            try:
+                json_result = json.loads(text)
+                return json_result
+            except json.JSONDecodeError as ex:
+                raise JSONParsingException("Error parsing json",
+                                           json_text=text) from ex
         else:
             return None
 
