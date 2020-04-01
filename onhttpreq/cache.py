@@ -1,17 +1,18 @@
+from datetime import datetime
 import bz2
 import json
+import os
+
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import Index
-import sqlalchemy
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import func
-import os
-from datetime import datetime
 from sqlalchemy.sql.expression import case
+import sqlalchemy
+
 
 _SQLAlchemyORMBase = declarative_base()
 
-
+# TODO: convert to enum
 # cache merge conflict modes
 CONFLICT_MODE_FAIL = 'fail'
 CONFLICT_MODE_SKIP = 'skip'
@@ -109,11 +110,11 @@ pragma user_version = 1;
             result['n'] = session.query(HTTPCacheContent.url).filter(*filters).count()
             (result['earliest_dt'], result['latest_dt'], result['n_expirable'],
              result['n_not_compressed'], result['n_compressed']) = \
-                 session.query(func.min(HTTPCacheContent.cached_on),
-                               func.max(HTTPCacheContent.cached_on),
-                               func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], else_=0)),
-                               func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], else_=0)),
-                               func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], else_=0))) \
+                 session.query(sqlalchemy.func.min(HTTPCacheContent.cached_on),
+                               sqlalchemy.func.max(HTTPCacheContent.cached_on),
+                               sqlalchemy.func.sum(case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], else_=0)),
+                               sqlalchemy.func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], else_=0)),
+                               sqlalchemy.func.sum(case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], else_=0))) \
                         .filter(*filters) \
                         .one()
 
