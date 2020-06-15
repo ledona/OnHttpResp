@@ -162,7 +162,7 @@ class HTTPReq:
             elif res[0] == ON_RESPONSE_FAIL:
                 raise HTTPReqError(http_response=get_response, msg=res[1])
             else:
-                raise ValueError("on_response returned an unknown command. {}".format(res))
+                raise ValueError(f"on_response returned an unknown command. {res}")
         return False
 
     def set_cached_expiration(self, url, **expiration):
@@ -172,8 +172,7 @@ class HTTPReq:
         if self._cache:
             self._cache.set_expiration(url, **expiration)
         else:
-            warnings.warn("Attempted to expire '{}' from cache, but caching is not currently enabled."
-                          .format(url))
+            warnings.warn(f"Attempted to expire '{url}' from cache, but caching is not currently enabled.")
 
     @property
     def history(self):
@@ -198,8 +197,7 @@ class HTTPReq:
             self._return_wait_cmd = None
         self.requests += 1
         if self.verbose:
-            print("\nHTTP request: '{url}' : '{kwargs}'\n".format(url=url,
-                                                                  kwargs=self._requests_kwargs))
+            print(f"\nHTTP request: '{url}' : '{self._requests_kwargs}'\n")
 
         result = None
         if self._cache is not None and not self.cache_overwrite:
@@ -214,7 +212,7 @@ class HTTPReq:
 
         if result is None:
             if self.cache_only:
-                raise CacheOnlyError("'{}' not in cache".format(url))
+                raise CacheOnlyError(f"'{url}' not in cache")
 
             # cache search failed
             if cache_fail_func is not None:
@@ -229,13 +227,13 @@ class HTTPReq:
                 except requests.exceptions.Timeout as ex:
                     r = None
                     if self.verbose:
-                        print("HTTPReq request timed out... {}".format(ex))
+                        print(f"HTTPReq request timed out... {ex}")
 
                 if self.verbose and r is not None:
                     print("HTTPReq response for attempt {}/{} code: {}".format(self._tries + 1,
                                                                                self._retries,
                                                                                r.status_code))
-                    print("HTTPReq Headers: {}".format(r.headers))
+                    print(f"HTTPReq Headers: {r.headers}")
                     print()
                     print(r.text)
 
@@ -246,14 +244,13 @@ class HTTPReq:
                     break
 
                 if self.verbose:
-                    print("Retry #{}".format(self._tries + 1))
+                    print(f"Retry #{self._tries + 1}")
 
             self.total_retries += max(0, self._tries - 1)
             self._last_result_details['http_attempts'] += 1
 
             if (r is None) or (r.status_code != http.client.OK):
-                msg = "Failed to retrieve '{}' after {} attempts. Skipping" \
-                      .format(url, self._tries + 1)
+                msg = f"Failed to retrieve '{url}' after {self._tries + 1} attempts. Skipping"
                 self._last_result_details['error'] = (msg, r or 'timedout')
 
                 if self.progress:
