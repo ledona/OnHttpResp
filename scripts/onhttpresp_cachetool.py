@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 import argparse
 from pprint import pprint
-from dateutil import parser as du_parser
 import os
+
+from dateutil import parser as du_parser
 
 from onhttpreq.cache import HTTPCache, CONFLICT_MODE_SKIP, CONFLICT_MODE_FAIL, CONFLICT_MODE_OVERWRITE
 
@@ -29,7 +30,7 @@ def filter_(args, cache):
       dt_range = None
 
    if (dt_range is None) and args.url is None:
-      raise ValueError("--url_blog, --dt_start or --dt_end must be specified")
+      raise ValueError("--url, --dt_start or --dt_end must be specified")
 
    urls = cache.filter(url_glob=args.url, dt_range=dt_range, dest_cache=dest_cache, delete=args.delete)
 
