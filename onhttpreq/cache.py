@@ -64,6 +64,11 @@ class JSONParsingException(OnHttpReqException):
         self.json_text = json_text.decode('utf-8')
 
 
+class CacheURLNotFound(OnHttpReqException):
+    """ raised if a url is not present in the cache during an operation that expects a
+    url to be cached """
+
+
 class HTTPCache:
     """
     cache http responses to a DB
@@ -329,7 +334,9 @@ pragma user_version = 1;
         try:
             _stat_cache = session.query(HTTPCacheContent) \
                                  .filter(HTTPCacheContent.url == url) \
-                                 .one()
+                                 .one_or_none()
+            if _stat_cache is None:
+                raise CacheURLNotFound(url)
             _stat_cache.expire_on_dt = expire_on_dt
             session.commit()
         finally:
