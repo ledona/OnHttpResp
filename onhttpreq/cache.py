@@ -247,6 +247,10 @@ pragma user_version = 1;
                not self.dont_expire and \
                cache_result.expire_on_dt is not None and \
                cache_result.expire_on_dt < datetime.utcnow():
+                print(
+                    f"URL '{url}' found in cache, but set for expiration in the past at "
+                    f"{cache_result.expire_on_dt}, so not returned."
+                )
                 cache_result = None
         finally:
             session.close()
