@@ -24,11 +24,13 @@ class HTTPReqError(Exception):
         self.msg = msg
 
     def __str__(self):
-        return "HTTPReqError msg '{}'\nstatus code {}\nHeaders:\n{}\nContent:\n{}".format(
-            self.msg,
-            self.http_resp.status_code if self.http_resp is not None else None,
-            self.http_resp.headers if self.http_resp is not None else None,
-            self.http_resp.text if self.http_resp is not None else None,
+        return (
+            "HTTPReqError msg '{}'\nstatus code {}\nHeaders:\n{}\nContent:\n{}".format(
+                self.msg,
+                self.http_resp.status_code if self.http_resp is not None else None,
+                self.http_resp.headers if self.http_resp is not None else None,
+                self.http_resp.text if self.http_resp is not None else None,
+            )
         )
 
 
@@ -148,12 +150,17 @@ class HTTPReq:
         if self.verbose or self.progress:
             if self.progress:
                 for _ in tqdm.trange(
-                    math.ceil(duration), desc=reason or "waiting on rate limit", leave=False
+                    math.ceil(duration),
+                    desc=reason or "waiting on rate limit",
+                    leave=False,
                 ):
                     time.sleep(1)
 
             else:
-                msg = f"Rate limit reached, reason '{reason}'. Waiting {duration} seconds starting at {started_waiting_dt:%X}"
+                msg = (
+                    f"Rate limit reached, reason '{reason}'. Waiting {duration} "
+                    f"seconds starting at {started_waiting_dt:%X}"
+                )
                 print("\n" + msg)
                 # test for positive duration just in case testing or other processing causes latency
                 if duration > 0:
