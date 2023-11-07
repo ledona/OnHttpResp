@@ -18,19 +18,19 @@ class CacheOnlyError(Exception):
 
 
 class HTTPReqError(Exception):
-    def __init__(self, http_response=None, msg=None):
+    def __init__(self, http_response=None, msg=None, url=None):
         super().__init__(msg, http_response)
         self.http_resp = http_response
         self.msg = msg
+        self.url = url
 
     def __str__(self):
-        return (
-            "HTTPReqError msg '{}'\nstatus code {}\nHeaders:\n{}\nContent:\n{}".format(
-                self.msg,
-                self.http_resp.status_code if self.http_resp is not None else None,
-                self.http_resp.headers if self.http_resp is not None else None,
-                self.http_resp.text if self.http_resp is not None else None,
-            )
+        return "HTTPReqError for url='{}'\nmsg '{}'\nstatus code {}\nHeaders:\n{}\nContent:\n{}".format(
+            self.url,
+            self.msg,
+            self.http_resp.status_code if self.http_resp is not None else None,
+            self.http_resp.headers if self.http_resp is not None else None,
+            self.http_resp.text if self.http_resp is not None else None,
         )
 
 
@@ -185,7 +185,7 @@ class HTTPReq:
             self._return_wait_cmd["started_waiting_dt"] = datetime.now()
             return True
         elif res[0] == ON_RESPONSE_FAIL:
-            raise HTTPReqError(http_response=get_response, msg=res[1])
+            raise HTTPReqError(http_response=get_response, msg=res[1], url=url)
         else:
             raise ValueError(f"on_response returned an unknown command. {res}")
         return False
@@ -290,7 +290,7 @@ class HTTPReq:
                 else:
                     # timeout
                     self.error_skips.append("No response, timedout")
-                raise HTTPReqError(http_response=r, msg=msg)
+                raise HTTPReqError(http_response=r, msg=msg, url=url)
 
             if self._cache is not None and not skip_cache:
                 self._cache.set(url, r.text)
