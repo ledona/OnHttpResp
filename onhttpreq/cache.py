@@ -1,16 +1,16 @@
-from datetime import datetime
 import bz2
 import json
 import os
+from datetime import datetime
 
+import sqlalchemy
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import Index
+from sqlalchemy.sql import text
 from sqlalchemy.sql.expression import case
-import sqlalchemy
 
 from .exception import OnHttpReqException
-
 
 _SQLAlchemyORMBase = declarative_base()
 
@@ -95,30 +95,39 @@ class HTTPCache:
 
         self.sessionmaker, engine = create_sessionmaker(filename, verbose=debug)
 
-        if create_cache:
-            _SQLAlchemyORMBase.metadata.create_all(engine)
-            engine.execute(f"pragma user_version = {CURRENT_CACHE_DB_VERSION}")
-            self.version = CURRENT_CACHE_DB_VERSION
-        else:
-            self.version = engine.execute("pragma user_version").fetchone()[0]
-            ex_msg_prefix = (
-                f"Cache is out of date. Cache at '{filename}' has version "
-                f"'{self.version}'. Current version is '{CURRENT_CACHE_DB_VERSION}'."
-            )
+        session = self.sessionmaker()
+        try:
+            if create_cache:
+                _SQLAlchemyORMBase.metadata.create_all(engine)
+                session.execute(
+                    text(f"pragma user_version = {CURRENT_CACHE_DB_VERSION}")
+                )
+                self.version = CURRENT_CACHE_DB_VERSION
+            else:
+                self.version = session.execute(text("pragma user_version")).fetchone()[
+                    0
+                ]
+                ex_msg_prefix = (
+                    f"Cache is out of date. Cache at '{filename}' has version "
+                    f"'{self.version}'. Current version is '{CURRENT_CACHE_DB_VERSION}'."
+                )
 
-            if self.version != CURRENT_CACHE_DB_VERSION:
-                if self.version == 0:
-                    # migrate to v1
-                    migration_instructions = """alter table json_cache rename column json to content;
+                if self.version != CURRENT_CACHE_DB_VERSION:
+                    if self.version == 0:
+                        # migrate to v1
+                        migration_instructions = """alter table json_cache rename column json to content;
 alter table json_cache rename column json_bzip2 to content_bzip2;
 alter table json_cache rename to content_cache;
 pragma user_version = 1;
 """
+                        raise CacheOutOfDate(
+                            f"{ex_msg_prefix} To migrate execute the following:\n{migration_instructions}"
+                        )
                     raise CacheOutOfDate(
-                        f"{ex_msg_prefix} To migrate execute the following:\n{migration_instructions}"
+                        ex_msg_prefix + " No instructions on how to migrate."
                     )
-                raise CacheOutOfDate(ex_msg_prefix + " No instructions on how to migrate.")
-
+        finally:
+            session.close()
         self.store_as_compressed = store_as_compressed
 
     def get_info(self, url_glob=None, dt_range=None):
@@ -148,11 +157,13 @@ pragma user_version = 1;
                     sqlalchemy.func.min(HTTPCacheContent.cached_on),
                     sqlalchemy.func.max(HTTPCacheContent.cached_on),
                     sqlalchemy.func.sum(
-                        case([(HTTPCacheContent.expire_on_dt.isnot(None), 1)], else_=0)
+                        case((HTTPCacheContent.expire_on_dt.isnot(None), 1), else_=0)
                     ),
-                    sqlalchemy.func.sum(case([(HTTPCacheContent.content.isnot(None), 1)], else_=0)),
                     sqlalchemy.func.sum(
-                        case([(HTTPCacheContent.content_bzip2.isnot(None), 1)], else_=0)
+                        case((HTTPCacheContent.content.isnot(None), 1), else_=0)
+                    ),
+                    sqlalchemy.func.sum(
+                        case((HTTPCacheContent.content_bzip2.isnot(None), 1), else_=0)
                     ),
                 )
                 .filter(*filters)
@@ -227,7 +238,11 @@ pragma user_version = 1;
            CONFLICT_MODE_OVERWRITE will overwrite what's in the cache with the merge value
         returns: list or urls merged, list of conflict urls
         """
-        if conflict_mode not in {CONFLICT_MODE_FAIL, CONFLICT_MODE_SKIP, CONFLICT_MODE_OVERWRITE}:
+        if conflict_mode not in {
+            CONFLICT_MODE_FAIL,
+            CONFLICT_MODE_SKIP,
+            CONFLICT_MODE_OVERWRITE,
+        }:
             raise ValueError(f"Invalid conflict mode '{conflict_mode}'")
 
         session = self.sessionmaker()
@@ -265,7 +280,9 @@ pragma user_version = 1;
         session = self.sessionmaker()
         try:
             cache_result = (
-                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
+                session.query(HTTPCacheContent)
+                .filter(HTTPCacheContent.url == url)
+                .one_or_none()
             )
 
             # if expiration is enabled then don't return anything that is expired
@@ -302,7 +319,9 @@ pragma user_version = 1;
         else:
             return None
 
-    def set(self, url, content, expire_on_dt=None, expire_time_delta=None, cached_on=None):
+    def set(
+        self, url, content, expire_on_dt=None, expire_time_delta=None, cached_on=None
+    ):
         """
         Use either expire_on_dt or expire_time_delta
 
@@ -326,7 +345,9 @@ pragma user_version = 1;
             if cached_on is not None:
                 kwarg_data["cached_on"] = cached_on
 
-            cache_data = HTTPCacheContent(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
+            cache_data = HTTPCacheContent(
+                url=url, expire_on_dt=expire_on_dt, **kwarg_data
+            )
             session.add(cache_data)
             try:
                 session.commit()
@@ -343,11 +364,15 @@ pragma user_version = 1;
 
                 session.rollback()
                 cache_data = (
-                    session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one()
+                    session.query(HTTPCacheContent)
+                    .filter(HTTPCacheContent.url == url)
+                    .one()
                 )
 
                 if self.store_as_compressed:
-                    data = content if isinstance(content, bytes) else str.encode(content)
+                    data = (
+                        content if isinstance(content, bytes) else str.encode(content)
+                    )
                     cache_data.content_bzip2 = bz2.compress(data)
                 else:
                     cache_data.content = content
@@ -362,12 +387,16 @@ pragma user_version = 1;
             assert expire_time_delta is not None
             expire_on_dt = datetime.utcnow() + expire_time_delta
         elif expire_time_delta is not None:
-            raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
+            raise ValueError(
+                "Only one of expire_on_dt and expire_time_delta can be not None"
+            )
 
         session = self.sessionmaker()
         try:
             _stat_cache = (
-                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
+                session.query(HTTPCacheContent)
+                .filter(HTTPCacheContent.url == url)
+                .one_or_none()
             )
             if _stat_cache is None:
                 raise CacheURLNotFound(url)

@@ -1,14 +1,19 @@
-from freezegun import freeze_time
-from unittest.mock import patch, MagicMock
-import unittest
-from datetime import datetime, timedelta, timezone
-import time
-import json
 import http
-import pytest
+import json
+import time
+import unittest
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
+import pytest
+from freezegun import freeze_time
+from onhttpreq import (
+    ON_RESPONSE_RETURN_WAIT,
+    ON_RESPONSE_WAIT_RETRY,
+    HTTPReq,
+    HTTPReqError,
+)
 from onhttpreq.cache import HTTPCache, HTTPCacheContent
-from onhttpreq import HTTPReq, HTTPReqError, ON_RESPONSE_WAIT_RETRY, ON_RESPONSE_RETURN_WAIT
 
 
 @pytest.mark.parametrize("store_as_compressed", [False, True])
@@ -27,9 +32,11 @@ def test_cache(store_as_compressed):
     assert ref_json == test_json
 
     session = cache.sessionmaker()
-    cache_result = session.query(HTTPCacheContent) \
-                          .filter(HTTPCacheContent.url == "url") \
-                          .one_or_none()
+    cache_result = (
+        session.query(HTTPCacheContent)
+        .filter(HTTPCacheContent.url == "url")
+        .one_or_none()
+    )
     assert (cache_result.content_bzip2 is not None) == store_as_compressed
     assert (cache_result.content is not None) != store_as_compressed
     session.close()
@@ -37,22 +44,20 @@ def test_cache(store_as_compressed):
 
 def test_expire():
     # behavior when expiration is disabled
-    ts = time.time()
-    utc_offset = 0
     _before_expiration = datetime(2017, 10, 22, 5, 53)
     _expire_on = datetime(2017, 10, 22, 5, 54)
     _after_expiration = datetime(2017, 10, 22, 5, 55)
     url = "url1"
 
     cache = HTTPCache(dont_expire=True)
-    cache.set(url, '[]', expire_on_dt=_expire_on)
+    cache.set(url, "[]", expire_on_dt=_expire_on)
     with freeze_time(_before_expiration):
         assert cache.get(url) is not None
     with freeze_time(_after_expiration):
         assert cache.get(url) is not None
 
     cache = HTTPCache(dont_expire=False)
-    cache.set(url, '[]', expire_on_dt=_expire_on)
+    cache.set(url, "[]", expire_on_dt=_expire_on)
     with freeze_time(_before_expiration):
         assert cache.get(url) is not None
 
@@ -65,7 +70,8 @@ def test_expire():
 
 
 class TestHTTPReq(unittest.TestCase):
-    """ test that httpreq is making expected calls to request """
+    """test that httpreq is making expected calls to request"""
+
     @staticmethod
     def _create_mock_request_get(status_code=http.client.OK, text=None, _json=None):
         """
@@ -85,24 +91,29 @@ class TestHTTPReq(unittest.TestCase):
     def test_get_w_cache_w_expiration(self, mock_requests):
         # test that get will work and that subsequent get will come from the the cache
 
-        ref_json_result = {'data': 32}
-        requests_get_return_value = self._create_mock_request_get(text=json.dumps(ref_json_result),
-                                                                  _json=ref_json_result)
+        ref_json_result = {"data": 32}
+        requests_get_return_value = self._create_mock_request_get(
+            text=json.dumps(ref_json_result), _json=ref_json_result
+        )
         mock_requests.get.return_value = requests_get_return_value
-        requests_kwargs = {'a': 1, 'b': 2}
+        requests_kwargs = {"a": 1, "b": 2}
         timeout = 5
         url = "http://test.com/api.json"
 
         # create HTTPReq with in memory cache
-        http_req = HTTPReq(cache_in_memory=True, request_timeout=timeout,
-                           requests_kwargs=requests_kwargs)
+        http_req = HTTPReq(
+            cache_in_memory=True,
+            request_timeout=timeout,
+            requests_kwargs=requests_kwargs,
+        )
 
         # use get to make a request
         resp = http_req.get(url)
 
         # test that requests.get was called correctly
-        mock_requests.get.assert_called_once_with(url=url, timeout=timeout,
-                                                  **requests_kwargs)
+        mock_requests.get.assert_called_once_with(
+            url=url, timeout=timeout, **requests_kwargs
+        )
         self.assertEqual(ref_json_result, resp)
 
         # see if the response was cached
@@ -123,9 +134,10 @@ class TestHTTPReq(unittest.TestCase):
 
         # call get again and test
         mock_requests.get.reset_mock()
-        ref_new_json_result = {'data': 33}
-        mock_requests.get.return_value = self._create_mock_request_get(text=json.dumps(ref_new_json_result),
-                                                                       _json=ref_new_json_result)
+        ref_new_json_result = {"data": 33}
+        mock_requests.get.return_value = self._create_mock_request_get(
+            text=json.dumps(ref_new_json_result), _json=ref_new_json_result
+        )
 
         # freeze time to prior to expiration and see if data still comes from cache
         with freeze_time(expiration_dt - timedelta(days=1)):
@@ -134,14 +146,17 @@ class TestHTTPReq(unittest.TestCase):
 
         # try again with current datetime
         resp = http_req.get(url)
-        mock_requests.get.assert_called_once_with(url=url, timeout=timeout, **requests_kwargs)
+        mock_requests.get.assert_called_once_with(
+            url=url, timeout=timeout, **requests_kwargs
+        )
         self.assertEqual(ref_new_json_result, resp)
 
     @patch("onhttpreq.http_req.requests")
     def test_cache_ignore_expire(self, mock_requests):
-        ref_json_result = {'data': 32}
-        requests_get_return_value = self._create_mock_request_get(text=json.dumps(ref_json_result),
-                                                                  _json=ref_json_result)
+        ref_json_result = {"data": 32}
+        requests_get_return_value = self._create_mock_request_get(
+            text=json.dumps(ref_json_result), _json=ref_json_result
+        )
         mock_requests.get.return_value = requests_get_return_value
         url = "http://test.com/api.json"
 
@@ -169,10 +184,10 @@ class TestHTTPReq(unittest.TestCase):
 
     @patch("onhttpreq.http_req.requests")
     def test_cache_overwrite(self, mock_requests):
-        ref_first_json_result = {'data': 'will be overwritten'}
+        ref_first_json_result = {"data": "will be overwritten"}
         mock_requests.get.return_value = self._create_mock_request_get(
-            text=json.dumps(ref_first_json_result),
-            _json=ref_first_json_result)
+            text=json.dumps(ref_first_json_result), _json=ref_first_json_result
+        )
         url = "http://test.com/api.json"
 
         # create HTTPReq with in memory cache
@@ -186,11 +201,11 @@ class TestHTTPReq(unittest.TestCase):
         self.assertEqual(ref_first_json_result, test_cached_json)
 
         # set the cache to overwrite existing data
-        ref_second_json_result = {'data': 'overwritten'}
+        ref_second_json_result = {"data": "overwritten"}
         mock_requests.get.reset_mock()
         mock_requests.get.return_value = self._create_mock_request_get(
-            text=json.dumps(ref_second_json_result),
-            _json=ref_second_json_result)
+            text=json.dumps(ref_second_json_result), _json=ref_second_json_result
+        )
         http_req.cache_overwrite = True
 
         # repeat the request
@@ -223,11 +238,12 @@ class TestHTTPReq(unittest.TestCase):
 
     @patch("onhttpreq.http_req.requests")
     def test_retry(self, mock_requests):
-        ref_json_result = {'data': 'will eventually be returned'}
+        ref_json_result = {"data": "will eventually be returned"}
         req_get_fails = 0
         mock_error_resp = self._create_mock_request_get(status_code=401)
-        mock_success_resp = self._create_mock_request_get(text=json.dumps(ref_json_result),
-                                                          _json=ref_json_result)
+        mock_success_resp = self._create_mock_request_get(
+            text=json.dumps(ref_json_result), _json=ref_json_result
+        )
 
         def req_get_fails_5(*args, **kwargs):
             # a request get function that will force a 5 retries
@@ -235,8 +251,7 @@ class TestHTTPReq(unittest.TestCase):
             if req_get_fails < 5:
                 req_get_fails += 1
                 return mock_error_resp
-            else:
-                return mock_success_resp
+            return mock_success_resp
 
         mock_requests.get.side_effect = req_get_fails_5
 
@@ -259,8 +274,7 @@ class TestHTTPReq(unittest.TestCase):
     def test_on_response_wait_retry(self, mock_sleep, mock_requests):
         ret = False
         duration = 60
-        wait_kwargs = {'reason': "testing",
-                       'duration': duration}
+        wait_kwargs = {"reason": "testing", "duration": duration}
 
         def on_response(resp):
             nonlocal ret
@@ -283,8 +297,7 @@ class TestHTTPReq(unittest.TestCase):
     def test_on_response_return_wait(self, mock_sleep, mock_requests):
         ret = False
         duration = 60
-        wait_kwargs = {'reason': "testing",
-                       'duration': duration}
+        wait_kwargs = {"reason": "testing", "duration": duration}
 
         def on_response(resp):
             nonlocal ret
