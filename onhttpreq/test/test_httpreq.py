@@ -269,3 +269,41 @@ def test_on_response_return_wait(mock_sleep, mock_requests):
         mock_requests.get.assert_called_once_with(url=url, timeout=None)
         assert resp == mock_requests.get.return_value.json.return_value
         mock_sleep.assert_called_once_with(duration)
+
+
+@patch("onhttpreq.http_req.requests")
+def test_alt_cache_key(mock_requests: MagicMock):
+    """test alternative cache key is used"""
+
+    ref_json_result = {"data": 32}
+    requests_get_return_value = _create_mock_request_get(
+        text=json.dumps(ref_json_result), _json=ref_json_result
+    )
+    mock_requests.get.return_value = requests_get_return_value
+    url = "http://test.com/api.json"
+    cache_key = "alt-key"
+
+    # create HTTPReq with in memory cache
+    http_req = HTTPReq(cache_in_memory=True)
+
+    # use get to make a request
+    resp = http_req.get(url, cache_key=cache_key)
+    assert resp == ref_json_result
+
+    # test that requests.get was called correctly
+    mock_requests.get.assert_called_once_with(url=url, timeout=None)
+
+    # see if the response was cached to the correct key
+    assert http_req._cache is not None
+    cached_to_url = http_req._cache.get_json(url)
+    assert cached_to_url is None
+    cached_to_key = http_req._cache.get_json(cache_key)
+    assert cached_to_key == ref_json_result
+
+    # make sure that new gets correctly get from cache or from http
+    mock_requests.get.reset_mock()
+    resp = http_req.get("xxx", cache_key=cache_key)
+    mock_requests.get.assert_not_called()
+
+    resp = http_req.get(url, cache_key=cache_key + "_")
+    mock_requests.get.assert_called_once_with(url=url, timeout=None)
