@@ -1,14 +1,13 @@
-"""
-Shared HTTP requester for API requests
-"""
-from datetime import datetime, timedelta
-import time
+"""HTTP requester with caching for API requests"""
+
 import http
 import math
+import time
 import warnings
+from datetime import datetime, timedelta
 
-import tqdm
 import requests
+import tqdm
 
 from .cache import HTTPCache
 
@@ -42,6 +41,9 @@ ON_RESPONSE_FAIL = "fail"
 
 # TODO: on_response should also take a URL arg
 class HTTPReq:
+
+    _tries: None | int
+
     def __init__(
         self,
         verbose=False,
@@ -58,14 +60,14 @@ class HTTPReq:
         cache_only=False,
     ):
         """
-        cache_in_memory - if true then create an in memory cache
-        cache_only - results will only come from the cache. if a url is not available in the cache
+        cache_in_memory: if true then create an in memory cache
+        cache_only: results will only come from the cache. if a url is not available in the cache
           then an error occurs, when this is true nothing in the cache will be considered expired
-        requests_kwargs - kwargs tp pass to requests when a get/request is made
-        request_timeout - timeout in seconds for a request reqponse, if no response is received
+        requests_kwargs: kwargs tp pass to requests when a get/request is made
+        request_timeout: timeout in seconds for a request reqponse, if no response is received
           then a retry is attempted (if there are retries remaining)
-        compression - compress the cache
-        on_response - A callback that can be used to process the http request responses prior to
+        compression: compress the cache
+        on_response: A callback that can be used to process the http request responses prior to
           returning results. Useful for handling header data that should result in varying the
           behavior of the cache, handling rate limits, etc.
           This should be a function that takes a request response, and returns None or
@@ -73,11 +75,13 @@ class HTTPReq:
           processing will be executed and the request response will be returned to the caller
           Available cmds and the arg_dict keys are
 
-          ON_RESPONSE_WAIT_RETRY: 'reason', 'duration'  - Wait for duration seconds then repeat the request
-            if this is used with progress then duration will be rounded up to the nearest second
-          ON_RESPONSE_RETURN_WAIT: 'duration' - return the response to the caller but do not execute any new
-             requests until the duration has expired (useful for throttling)
-          ON_RESPONSE_FAIL: 'reason' - Raise a failure exception, include the reason in the exception
+          ON_RESPONSE_WAIT_RETRY: 'reason', 'duration' - Wait for duration seconds then repeat
+            the request if this is used with progress then duration will be rounded up to the
+            nearest second
+          ON_RESPONSE_RETURN_WAIT: 'duration' - return the response to the caller but do not
+            execute any new requests until the duration has expired (useful for throttling)
+          ON_RESPONSE_FAIL: 'reason' - Raise a failure exception, include the reason in the
+            exception
         """
         assert not (
             (cache_filename is not None) and cache_in_memory
@@ -170,8 +174,8 @@ class HTTPReq:
 
     def _process_on_response(self, get_response, url):
         """
-        returns - true if the retry loop should be broken
-        raises - ValueError if the on_response method returned an invalid result
+        returns: true if the retry loop should be broken
+        raises: ValueError if the on_response method returned an invalid result
         """
         res = self._on_response(get_response)
         if res is None:
@@ -213,10 +217,21 @@ class HTTPReq:
             "request_retries": self.total_retries,
         }
 
-    def get(self, url, parse_json=True, cache_fail_func=None, skip_cache=False):
+    _GetReturnType = int | float | dict | list[int | float | str] | str | bytes
+
+    def get(
+        self,
+        url: str,
+        parse_json=True,
+        cache_fail_func=None,
+        skip_cache=False,
+        cache_key: str | None = None,
+    ) -> _GetReturnType:
         """
         cache_fail_func: if cache is enabled and the url is not in the cache and this is not None
            then call this func. Useful for displaying messages
+        cache_key: if not None then caching of the request content will use this key instead
+           of the url. if None then cache storage/lookup will be against the url
         """
         assert not (skip_cache and self.cache_only)
 
@@ -230,76 +245,82 @@ class HTTPReq:
             print(f"\nHTTP request: '{url}' : '{self._requests_kwargs}'\n")
 
         result = None
+        url_for_cache_key = cache_key or url
         if self._cache is not None and not self.cache_overwrite and not skip_cache:
-            result = self._cache.get_json(url) if parse_json else self._cache.get(url)
+            result = (
+                self._cache.get_json(url_for_cache_key)
+                if parse_json
+                else self._cache.get(url_for_cache_key)
+            )
+            if self.verbose:
+                print(("not " if result is None else "") + "found in cache")
             if result is not None:
                 self._last_result_details["retrieved_from"] = "cache"
                 self.requests_from_cache += 1
-            if self.verbose:
-                print(("not " if result is None else "") + "found in cache")
+                return result
 
-        if result is None:
-            if self.cache_only:
-                raise CacheOnlyError(f"'{url}' not in cache")
+        if self.cache_only:
+            raise CacheOnlyError(f"'{url_for_cache_key}' not in cache")
 
-            # cache search failed
-            if cache_fail_func is not None:
-                cache_fail_func()
+        # cache search failed
+        if cache_fail_func is not None:
+            cache_fail_func()
 
-            self._tries = 0
-            while self._tries < self._retries + 1:
-                self._tries += 1
-                self.http_requests += 1
-                try:
-                    r = requests.get(
-                        url=url, timeout=self._request_timeout, **self._requests_kwargs
-                    )
-                except requests.exceptions.Timeout as ex:
-                    r = None
-                    if self.verbose:
-                        print(f"HTTPReq request timed out... {ex}")
-
-                if self.verbose and r is not None:
-                    print(
-                        f"HTTPReq response for attempt {self._tries + 1}/{self._retries} code: {r.status_code}"
-                    )
-                    print(f"HTTPReq Headers: {r.headers}")
-                    print()
-                    print(r.text)
-
-                if self._on_response is not None:
-                    if self._process_on_response(r, url):
-                        break
-                elif r is not None and r.status_code == http.client.OK:
-                    break
-
+        self._tries = 0
+        while self._tries < self._retries + 1:
+            self._tries += 1
+            self.http_requests += 1
+            try:
+                r = requests.get(url=url, timeout=self._request_timeout, **self._requests_kwargs)
+            except requests.exceptions.Timeout as ex:
+                r = None
                 if self.verbose:
-                    print(f"Retry #{self._tries + 1}")
+                    print(f"HTTPReq request timed out... {ex}")
 
-            self.total_retries += max(0, self._tries - 1)
-            self._last_result_details["http_attempts"] += 1
+            if self.verbose and r is not None:
+                print(
+                    f"HTTPReq response for attempt {self._tries + 1}/{self._retries} "
+                    f"code: {r.status_code}"
+                )
+                print(f"HTTPReq Headers: {r.headers}")
+                print()
+                print(r.text)
 
-            if (r is None) or (r.status_code != http.client.OK):
-                msg = f"Failed to retrieve '{url}' after {self._tries + 1} attempts. Skipping"
-                self._last_result_details["error"] = (msg, r or "timedout")
-
-                if self.progress:
-                    print(msg)
-                if r is not None:
-                    self.error_skips.append(r)
-                else:
-                    # timeout
-                    self.error_skips.append("No response, timedout")
-                raise HTTPReqError(http_response=r, msg=msg, url=url)
-
-            if self._cache is not None and not skip_cache:
-                self._cache.set(url, r.text)
-
-            self._last_result_details["retrieved_from"] = "web"
+            if self._on_response is not None:
+                if self._process_on_response(r, url):
+                    break
+            elif r is not None and r.status_code == http.client.OK:
+                break
 
             if self.verbose:
-                print()
+                print(f"Retry #{self._tries + 1}")
 
-            result = r.json() if parse_json else r.content
+        self.total_retries += max(0, self._tries - 1)
+        self._last_result_details["http_attempts"] += 1
 
+        if (r is None) or (r.status_code != http.client.OK):
+            msg = (
+                f"Failed to retrieve '{url_for_cache_key}' "
+                f"after {self._tries + 1} attempts. Skipping"
+            )
+            self._last_result_details["error"] = (msg, r or "timedout")
+
+            if self.progress:
+                print(msg)
+            if r is not None:
+                self.error_skips.append(r)
+            else:
+                # timeout
+                self.error_skips.append("No response, timedout")
+            raise HTTPReqError(http_response=r, msg=msg, url=url)
+
+        if self._cache is not None and not skip_cache:
+            self._cache.set(url_for_cache_key, r.text)
+
+        self._last_result_details["retrieved_from"] = "web"
+
+        if self.verbose:
+            print()
+
+        result = r.json() if parse_json else r.content
         return result

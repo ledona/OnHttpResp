@@ -1,2 +1,2 @@
 class OnHttpReqException(Exception):
-    """ top level exception for the package """
+    """top level exception for the package"""

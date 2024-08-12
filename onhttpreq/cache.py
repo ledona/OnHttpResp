@@ -3,16 +3,21 @@ import json
 import os
 from datetime import datetime
 
-import sqlalchemy
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.schema import Index
+from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, sessionmaker
 from sqlalchemy.sql import text
 from sqlalchemy.sql.expression import case
 
 from .exception import OnHttpReqException
 
-_SQLAlchemyORMBase = declarative_base()
+
+class _SQLAlchemyORMBase:  # pylint: disable=too-few-public-methods
+    __allow_unmapped__ = True
+
+
+_SQLAlchemyORMBase = declarative_base(cls=_SQLAlchemyORMBase)
+"""Base class for all ORM objects"""
 
 # TODO: convert to enum
 # cache merge conflict modes
@@ -26,13 +31,14 @@ CURRENT_CACHE_DB_VERSION = 1
 
 class HTTPCacheContent(_SQLAlchemyORMBase):
     __tablename__ = "content_cache"
-    url = sqlalchemy.Column(sqlalchemy.String(2000), primary_key=True)
-    cached_on = sqlalchemy.Column(sqlalchemy.DateTime, default=sqlalchemy.func.now())
-    content = sqlalchemy.Column(sqlalchemy.String, nullable=True)
-    content_bzip2 = sqlalchemy.Column(sqlalchemy.LargeBinary, nullable=True)
-    expire_on_dt = sqlalchemy.Column(
-        sqlalchemy.DateTime,
-        doc="If current date/time is past this datetime then this record can be replaced by updated data",
+    url: Mapped[str] = mapped_column(String(2000), primary_key=True)
+    cached_on = mapped_column(DateTime, default=func.now())
+    content = mapped_column(String, nullable=True)
+    content_bzip2 = mapped_column(LargeBinary, nullable=True)
+    expire_on_dt = mapped_column(
+        DateTime,
+        doc="If current date/time is past this datetime then this "
+        "record can be replaced by updated data",
     )
 
 
@@ -42,7 +48,7 @@ Index("ix_expire_on_dt", HTTPCacheContent.expire_on_dt)
 def create_sessionmaker(filename, verbose=False):
     """returns: sessionmaker, engine"""
     db_path = ("/" + filename) if filename is not None else ""
-    engine = sqlalchemy.create_engine("sqlite://" + db_path, echo=verbose)
+    engine = create_engine("sqlite://" + db_path, echo=verbose)
     return sessionmaker(bind=engine), engine
 
 
@@ -99,14 +105,10 @@ class HTTPCache:
         try:
             if create_cache:
                 _SQLAlchemyORMBase.metadata.create_all(engine)
-                session.execute(
-                    text(f"pragma user_version = {CURRENT_CACHE_DB_VERSION}")
-                )
+                session.execute(text(f"pragma user_version = {CURRENT_CACHE_DB_VERSION}"))
                 self.version = CURRENT_CACHE_DB_VERSION
             else:
-                self.version = session.execute(text("pragma user_version")).fetchone()[
-                    0
-                ]
+                self.version = session.execute(text("pragma user_version")).fetchone()[0]
                 ex_msg_prefix = (
                     f"Cache is out of date. Cache at '{filename}' has version "
                     f"'{self.version}'. Current version is '{CURRENT_CACHE_DB_VERSION}'."
@@ -123,9 +125,7 @@ pragma user_version = 1;
                         raise CacheOutOfDate(
                             f"{ex_msg_prefix} To migrate execute the following:\n{migration_instructions}"
                         )
-                    raise CacheOutOfDate(
-                        ex_msg_prefix + " No instructions on how to migrate."
-                    )
+                    raise CacheOutOfDate(ex_msg_prefix + " No instructions on how to migrate.")
         finally:
             session.close()
         self.store_as_compressed = store_as_compressed
@@ -154,17 +154,11 @@ pragma user_version = 1;
                 result["n_compressed"],
             ) = (
                 session.query(
-                    sqlalchemy.func.min(HTTPCacheContent.cached_on),
-                    sqlalchemy.func.max(HTTPCacheContent.cached_on),
-                    sqlalchemy.func.sum(
-                        case((HTTPCacheContent.expire_on_dt.isnot(None), 1), else_=0)
-                    ),
-                    sqlalchemy.func.sum(
-                        case((HTTPCacheContent.content.isnot(None), 1), else_=0)
-                    ),
-                    sqlalchemy.func.sum(
-                        case((HTTPCacheContent.content_bzip2.isnot(None), 1), else_=0)
-                    ),
+                    func.min(HTTPCacheContent.cached_on),
+                    func.max(HTTPCacheContent.cached_on),
+                    func.sum(case((HTTPCacheContent.expire_on_dt.isnot(None), 1), else_=0)),
+                    func.sum(case((HTTPCacheContent.content.isnot(None), 1), else_=0)),
+                    func.sum(case((HTTPCacheContent.content_bzip2.isnot(None), 1), else_=0)),
                 )
                 .filter(*filters)
                 .one()
@@ -280,9 +274,7 @@ pragma user_version = 1;
         session = self.sessionmaker()
         try:
             cache_result = (
-                session.query(HTTPCacheContent)
-                .filter(HTTPCacheContent.url == url)
-                .one_or_none()
+                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
             )
 
             # if expiration is enabled then don't return anything that is expired
@@ -302,26 +294,23 @@ pragma user_version = 1;
 
         if cache_result is None:
             return None
-        elif cache_result.content is not None:
+        if cache_result.content is not None:
             return cache_result.content
-        else:
-            assert cache_result.content_bzip2 is not None
-            return bz2.decompress(cache_result.content_bzip2)
+        assert cache_result.content_bzip2 is not None
+        return bz2.decompress(cache_result.content_bzip2)
 
     def get_json(self, url):
-        text = self.get(url)
-        if text is not None:
+        content = self.get(url)
+        if content is not None:
             try:
-                json_result = json.loads(text)
+                json_result = json.loads(content)
                 return json_result
             except json.JSONDecodeError as ex:
-                raise JSONParsingException("Error parsing json", json_text=text) from ex
+                raise JSONParsingException("Error parsing json", json_text=content) from ex
         else:
             return None
 
-    def set(
-        self, url, content, expire_on_dt=None, expire_time_delta=None, cached_on=None
-    ):
+    def set(self, url, content, expire_on_dt=None, expire_time_delta=None, cached_on=None):
         """
         Use either expire_on_dt or expire_time_delta
 
@@ -345,18 +334,16 @@ pragma user_version = 1;
             if cached_on is not None:
                 kwarg_data["cached_on"] = cached_on
 
-            cache_data = HTTPCacheContent(
-                url=url, expire_on_dt=expire_on_dt, **kwarg_data
-            )
+            cache_data = HTTPCacheContent(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
             session.add(cache_data)
             try:
                 session.commit()
-            except sqlalchemy.exc.IntegrityError as e:
+            except IntegrityError as ie:
                 # overwrite the existing value
                 # this exception is sufficient for the sqlite3 cache implementation,
                 # may not be reslient to updates
                 if (
-                    e.args[0]
+                    ie.args[0]
                     != "(sqlite3.IntegrityError) UNIQUE constraint failed: content_cache.url"
                 ):
                     # there was some other exception
@@ -364,15 +351,11 @@ pragma user_version = 1;
 
                 session.rollback()
                 cache_data = (
-                    session.query(HTTPCacheContent)
-                    .filter(HTTPCacheContent.url == url)
-                    .one()
+                    session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one()
                 )
 
                 if self.store_as_compressed:
-                    data = (
-                        content if isinstance(content, bytes) else str.encode(content)
-                    )
+                    data = content if isinstance(content, bytes) else str.encode(content)
                     cache_data.content_bzip2 = bz2.compress(data)
                 else:
                     cache_data.content = content
@@ -387,16 +370,12 @@ pragma user_version = 1;
             assert expire_time_delta is not None
             expire_on_dt = datetime.utcnow() + expire_time_delta
         elif expire_time_delta is not None:
-            raise ValueError(
-                "Only one of expire_on_dt and expire_time_delta can be not None"
-            )
+            raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
 
         session = self.sessionmaker()
         try:
             _stat_cache = (
-                session.query(HTTPCacheContent)
-                .filter(HTTPCacheContent.url == url)
-                .one_or_none()
+                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
             )
             if _stat_cache is None:
                 raise CacheURLNotFound(url)

@@ -14,7 +14,7 @@ from ..cache import (
 )
 
 
-@pytest.mark.parametrize("store_as_compressed", [False, True])
+@pytest.mark.parametrize("store_as_compressed", [False, True], ids=["compressed", "not-compressed"])
 def test_cache(store_as_compressed):
     cache = HTTPCache(store_as_compressed=store_as_compressed)
     assert cache.get("url") is None
@@ -31,9 +31,7 @@ def test_cache(store_as_compressed):
 
     session = cache.sessionmaker()
     cache_result = (
-        session.query(HTTPCacheContent)
-        .filter(HTTPCacheContent.url == "url")
-        .one_or_none()
+        session.query(HTTPCacheContent).filter(HTTPCacheContent.url == "url").one_or_none()
     )
     assert (cache_result.content_bzip2 is not None) == store_as_compressed
     assert (cache_result.content is not None) != store_as_compressed
@@ -101,8 +99,8 @@ def test_info(compressed):
     assert ref_info == info
 
 
-@pytest.fixture
-def compressed_cache():
+@pytest.fixture(name="compressed_cache")
+def _compressed_cache():
     cache = HTTPCache(store_as_compressed=True)
     _populate_fake_cache(cache)
     return cache
@@ -167,9 +165,7 @@ def test_filter(compressed_cache, filter_kwargs, ref_urls, ref_info_update):
 )
 def test_filter_w_dest(compressed_cache, delete, dest, filter_kwargs):
     dest_cache = HTTPCache(store_as_compressed=True) if dest else None
-    urls = compressed_cache.filter(
-        dest_cache=dest_cache, delete=delete, **filter_kwargs
-    )
+    urls = compressed_cache.filter(dest_cache=dest_cache, delete=delete, **filter_kwargs)
     assert {"url1", "url2"} == set(urls)
 
     if dest:
@@ -177,9 +173,7 @@ def test_filter_w_dest(compressed_cache, delete, dest, filter_kwargs):
         assert {"url1", "url2"} == set(urls)
         info = dest_cache.get_info()
         ref_info = dict(BASE_REF_INFO)
-        ref_info.update(
-            {"n": 2, "latest_dt": REF_MID_DT, "n_compressed": 2, "n_expirable": 0}
-        )
+        ref_info.update({"n": 2, "latest_dt": REF_MID_DT, "n_compressed": 2, "n_expirable": 0})
         assert ref_info == info
 
     info = compressed_cache.get_info()
@@ -208,8 +202,8 @@ def test_merge(compressed_cache):
     assert ["url4"] == urls
 
 
-@pytest.fixture(scope="module")
-def merge_cache():
+@pytest.fixture(scope="module", name="merge_cache")
+def _merge_cache():
     cache_ = HTTPCache(store_as_compressed=True)
     cache_.set("url0", "content Z", cached_on=REF_EARLY_DT)
     cache_.set("url2", "content X", cached_on=REF_LAST_DT)
@@ -230,7 +224,6 @@ def test_merge_w_conflict(merge_cache, compressed_cache, conflict_mode):
         )
     except CacheMergeConflict as ex:
         test_exception = ex
-        pass
 
     ref_data = {"url1": "content A"}
 
@@ -244,14 +237,10 @@ def test_merge_w_conflict(merge_cache, compressed_cache, conflict_mode):
         elif conflict_mode == CONFLICT_MODE_SKIP:
             ref_data.update({"url2": "content B", "url3": "content C"})
         else:
-            raise ValueError(
-                f"Don't know how to test for conflict_mode '{conflict_mode}'"
-            )
+            raise ValueError(f"Don't know how to test for conflict_mode '{conflict_mode}'")
     else:
         assert test_exception is not None
         ref_data.update({"url2": "content B", "url3": "content C"})
 
-    test_data = {
-        url: compressed_cache.get(url).decode() for url in compressed_cache.filter("*")
-    }
+    test_data = {url: compressed_cache.get(url).decode() for url in compressed_cache.filter("*")}
     assert ref_data == test_data
