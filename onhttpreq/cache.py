@@ -1,7 +1,7 @@
 import bz2
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func
 from sqlalchemy.exc import IntegrityError
@@ -282,7 +282,7 @@ pragma user_version = 1;
                 cache_result is not None
                 and not self.dont_expire
                 and cache_result.expire_on_dt is not None
-                and cache_result.expire_on_dt < datetime.utcnow()
+                and cache_result.expire_on_dt < datetime.now(UTC)
             ):
                 print(
                     f"URL '{url}' found in cache, but set for expiration in the past at "
@@ -320,7 +320,7 @@ pragma user_version = 1;
         """
         assert not (expire_on_dt is not None and expire_time_delta is not None)
         if expire_on_dt is None and expire_time_delta is not None:
-            expire_on_dt = datetime.utcnow() + expire_time_delta
+            expire_on_dt = datetime.now(UTC) + expire_time_delta
 
         session = self.sessionmaker()
         try:
@@ -368,7 +368,7 @@ pragma user_version = 1;
     def set_expiration(self, url, expire_on_dt=None, expire_time_delta=None):
         if expire_on_dt is None:
             assert expire_time_delta is not None
-            expire_on_dt = datetime.utcnow() + expire_time_delta
+            expire_on_dt = datetime.now(UTC) + expire_time_delta
         elif expire_time_delta is not None:
             raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
 

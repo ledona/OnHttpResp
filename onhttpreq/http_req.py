@@ -5,6 +5,7 @@ import math
 import time
 import warnings
 from datetime import datetime, timedelta
+from typing import Callable, cast
 
 import requests
 import tqdm
@@ -24,19 +25,25 @@ class HTTPReqError(Exception):
         self.url = url
 
     def __str__(self):
-        return "HTTPReqError for url='{}'\nmsg '{}'\nstatus code {}\nHeaders:\n{}\nContent:\n{}".format(
-            self.url,
-            self.msg,
-            self.http_resp.status_code if self.http_resp is not None else None,
-            self.http_resp.headers if self.http_resp is not None else None,
-            self.http_resp.text if self.http_resp is not None else None,
-        )
+        code = self.http_resp.status_code if self.http_resp is not None else None
+        headers = self.http_resp.headers if self.http_resp is not None else None
+        text = self.http_resp.text if self.http_resp is not None else None
+        return f"""HTTPReqError for url='{self.url}'
+msg '{self.msg}'
+status code {code}
+Headers:
+{headers}
+Content:
+{text}"""
 
 
-# TODO: this should be an enum
+# TODO: these should be an enum
 ON_RESPONSE_WAIT_RETRY = "wait_retry"
+"""wait for a specified duration then try again"""
 ON_RESPONSE_RETURN_WAIT = "return_wait"
+"""return the http response then wait for a specified duration"""
 ON_RESPONSE_FAIL = "fail"
+"""raise a failure for the http request"""
 
 
 # TODO: on_response should also take a URL arg
@@ -50,7 +57,7 @@ class HTTPReq:
         progress=False,
         http_retries=2,
         requests_kwargs=None,
-        on_response=None,
+        on_response: None | Callable = None,
         request_timeout=None,
         cache_filename=None,
         cache_in_memory=False,
@@ -75,13 +82,14 @@ class HTTPReq:
           processing will be executed and the request response will be returned to the caller
           Available cmds and the arg_dict keys are
 
-          ON_RESPONSE_WAIT_RETRY: 'reason', 'duration' - Wait for duration seconds then repeat
-            the request if this is used with progress then duration will be rounded up to the
-            nearest second
-          ON_RESPONSE_RETURN_WAIT: 'duration' - return the response to the caller but do not
-            execute any new requests until the duration has expired (useful for throttling)
-          ON_RESPONSE_FAIL: 'reason' - Raise a failure exception, include the reason in the
-            exception
+          ON_RESPONSE_WAIT_RETRY: dict with keys 'reason', 'duration' - Wait for duration seconds
+            then repeat the request if this is used with progress then duration will be rounded
+            up to the nearest second
+          ON_RESPONSE_RETURN_WAIT: same as ON_RESPONSE_WAIT_RETRY except return the response
+            and do not do the next request until after the wait period
+          ON_RESPONSE_FAIL: dict with key 'reason' - Raise a failure exception, note that the
+            entire response dict will be on the raised exception in case there is a need to
+            pass through additional data
         """
         assert not (
             (cache_filename is not None) and cache_in_memory
@@ -114,8 +122,8 @@ class HTTPReq:
         self._retries = http_retries
         self.requests = 0
         self.requests_from_cache = 0
-        self._return_wait_cmd = None
-        self.error_skips = []
+        self._return_wait_cmd: dict | None = None
+        self.error_skips: list = []
         self.total_wait_secs = 0
         self.total_retries = 0
         self._on_response = on_response
@@ -123,7 +131,7 @@ class HTTPReq:
         self.verbose = verbose
         self.http_requests = 0
 
-        self._last_result_details = None
+        self._last_result_details: None | dict = None
 
     @property
     def caching(self):
@@ -177,22 +185,27 @@ class HTTPReq:
         returns: true if the retry loop should be broken
         raises: ValueError if the on_response method returned an invalid result
         """
+        assert self._on_response is not None
         res = self._on_response(get_response)
         if res is None:
             return True
+
         if res[0] == ON_RESPONSE_WAIT_RETRY:
+            assert self._tries is not None
             if self._tries < self._retries + 1:
                 # only makes sense to wait if there is another retry available
                 self._wait(**res[1])
-        elif res[0] == ON_RESPONSE_RETURN_WAIT:
-            self._return_wait_cmd = dict(res[1])
-            self._return_wait_cmd["started_waiting_dt"] = datetime.now()
+            return False
+
+        if res[0] == ON_RESPONSE_RETURN_WAIT:
+            assert isinstance(res[1], dict)
+            self._return_wait_cmd = {"started_waiting_dt": datetime.now(), **res[1]}
             return True
-        elif res[0] == ON_RESPONSE_FAIL:
+
+        if res[0] == ON_RESPONSE_FAIL:
             raise HTTPReqError(http_response=get_response, msg=res[1], url=url)
-        else:
-            raise ValueError(f"on_response returned an unknown command. {res}")
-        return False
+
+        raise ValueError(f"on_response callback returned an unknown command. {res}")
 
     def set_cached_expiration(self, url, **expiration):
         """
@@ -217,7 +230,7 @@ class HTTPReq:
             "request_retries": self.total_retries,
         }
 
-    _GetReturnType = int | float | dict | list[int | float | str] | str | bytes
+    _GetReturnType = int | float | dict | str | list | bytes
 
     def get(
         self,
@@ -257,7 +270,7 @@ class HTTPReq:
             if result is not None:
                 self._last_result_details["retrieved_from"] = "cache"
                 self.requests_from_cache += 1
-                return result
+                return cast(HTTPReq._GetReturnType, result)
 
         if self.cache_only:
             raise CacheOnlyError(f"'{url_for_cache_key}' not in cache")
@@ -271,6 +284,7 @@ class HTTPReq:
             self._tries += 1
             self.http_requests += 1
             try:
+                self._last_result_details["http_attempts"] += 1
                 r = requests.get(url=url, timeout=self._request_timeout, **self._requests_kwargs)
             except requests.exceptions.Timeout as ex:
                 r = None
@@ -296,7 +310,6 @@ class HTTPReq:
                 print(f"Retry #{self._tries + 1}")
 
         self.total_retries += max(0, self._tries - 1)
-        self._last_result_details["http_attempts"] += 1
 
         if (r is None) or (r.status_code != http.client.OK):
             msg = (
