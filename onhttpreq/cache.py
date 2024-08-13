@@ -282,7 +282,7 @@ pragma user_version = 1;
                 cache_result is not None
                 and not self.dont_expire
                 and cache_result.expire_on_dt is not None
-                and cache_result.expire_on_dt < datetime.now(UTC)
+                and cache_result.expire_on_dt.replace(tzinfo=UTC) < datetime.now(UTC)
             ):
                 print(
                     f"URL '{url}' found in cache, but set for expiration in the past at "
