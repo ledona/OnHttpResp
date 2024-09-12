@@ -146,39 +146,43 @@ class HTTPReq:
     def caching_enabled(self):
         return self._cache is not None
 
-    def _wait(self, reason=None, duration=None, started_waiting_dt=None):
+    def _wait(
+        self,
+        reason: None | str = None,
+        duration: None | int = None,
+        started_waiting_dt: datetime | None = None,
+    ):
         assert duration is not None
 
-        now = datetime.now()
         self.total_wait_secs += duration
         if started_waiting_dt is None:
-            started_waiting_dt = now
-        else:
-            # the actual duration is possibly less due to execution latency
-            wait_till_dt = started_waiting_dt + timedelta(seconds=duration)
-            # pad with a second
-            duration = (wait_till_dt - now).total_seconds()
-        # wait an extra second for good measure
-        if self.verbose or self.progress:
-            if self.progress:
-                for _ in tqdm.trange(
-                    math.ceil(duration),
-                    desc=reason or "waiting on rate limit",
-                    leave=False,
-                ):
-                    time.sleep(1)
+            started_waiting_dt = datetime.now()
 
-            else:
-                msg = (
-                    f"Rate limit reached, reason '{reason}'. Waiting {duration} "
-                    f"seconds starting at {started_waiting_dt:%X}"
-                )
-                print("\n" + msg)
-                # test for positive duration just in case testing or other processing causes latency
-                if duration > 0:
-                    time.sleep(duration)
-        elif duration > 0:
-            time.sleep(duration)
+        wait_till_dt = started_waiting_dt + timedelta(seconds=duration)
+        wait_duration = (wait_till_dt - started_waiting_dt).total_seconds()
+        if wait_duration <= 0:
+            return
+
+        if self.verbose:
+            print(
+                f"\nRate limit reached, reason '{reason}'. Waiting {duration} "
+                f"seconds starting at {started_waiting_dt:%X}"
+            )
+
+        if self.progress:
+            wait_iterator = tqdm.trange(
+                math.ceil(wait_duration),
+                desc=reason or "waiting on rate limit",
+                leave=False,
+            )
+        else:
+            wait_iterator = range(math.ceil(wait_duration))
+        for _ in wait_iterator:
+            time.sleep(1)
+            if datetime.now() > wait_till_dt:
+                # in case the computer hibernates, the progress will be off but 
+                # exit on time
+                break
 
     def _process_on_response(self, get_response, url):
         """
