@@ -5,7 +5,7 @@ import math
 import time
 import warnings
 from datetime import datetime, timedelta
-from typing import Callable, cast
+from typing import Any, Callable, Literal, TypedDict, cast
 
 import requests
 import tqdm
@@ -44,6 +44,14 @@ ON_RESPONSE_RETURN_WAIT = "return_wait"
 """return the http response then wait for a specified duration"""
 ON_RESPONSE_FAIL = "fail"
 """raise a failure for the http request"""
+
+
+class _LastResultDetails(TypedDict, total=False):
+    url: str
+    http_attempts: int
+    retrieved_from: Literal["cache", "web"]
+    error: tuple[str, Any]
+    expire_on_dt: datetime | None
 
 
 # TODO: on_response should also take a URL arg
@@ -131,7 +139,7 @@ class HTTPReq:
         self.verbose = verbose
         self.http_requests = 0
 
-        self._last_result_details: None | dict = None
+        self._last_result_details: _LastResultDetails = {}
 
     @property
     def caching(self):
@@ -180,7 +188,7 @@ class HTTPReq:
         for _ in wait_iterator:
             time.sleep(1)
             if datetime.now() > wait_till_dt:
-                # in case the computer hibernates, the progress will be off but 
+                # in case the computer hibernates, the progress will be off but
                 # exit on time
                 break
 
@@ -273,6 +281,9 @@ class HTTPReq:
                 print(("not " if result is None else "") + "found in cache")
             if result is not None:
                 self._last_result_details["retrieved_from"] = "cache"
+                self._last_result_details["expire_on_dt"] = self._cache.get_expiration(
+                    url_for_cache_key
+                )
                 self.requests_from_cache += 1
                 return cast(HTTPReq._GetReturnType, result)
 

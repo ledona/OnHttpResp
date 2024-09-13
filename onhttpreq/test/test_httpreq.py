@@ -214,7 +214,7 @@ def test_retry(mock_requests):
 
 @patch("onhttpreq.http_req.requests")
 @patch("onhttpreq.http_req.time.sleep")
-def test_on_response_wait_retry(mock_sleep, mock_requests):
+def test_on_response_wait_retry(mock_sleep: MagicMock, mock_requests):
     ret = False
     duration = 60
     wait_kwargs = {"reason": "testing", "duration": duration}
@@ -232,7 +232,8 @@ def test_on_response_wait_retry(mock_sleep, mock_requests):
     resp = http_req.get(url)
 
     assert resp == mock_requests.get.return_value.json.return_value
-    mock_sleep.assert_called_once_with(duration)
+    assert mock_sleep.call_count == duration
+    mock_sleep.assert_called_with(1)
     assert mock_requests.get.call_count == 2
 
 
@@ -268,7 +269,8 @@ def test_on_response_return_wait(mock_sleep, mock_requests):
         resp = http_req.get(url)
         mock_requests.get.assert_called_once_with(url=url, timeout=None)
         assert resp == mock_requests.get.return_value.json.return_value
-        mock_sleep.assert_called_once_with(duration)
+        assert mock_sleep.call_count == duration
+        mock_sleep.assert_called_with(1)
 
 
 @patch("onhttpreq.http_req.requests")

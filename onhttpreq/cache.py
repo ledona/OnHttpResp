@@ -32,13 +32,14 @@ CURRENT_CACHE_DB_VERSION = 1
 class HTTPCacheContent(_SQLAlchemyORMBase):
     __tablename__ = "content_cache"
     url: Mapped[str] = mapped_column(String(2000), primary_key=True)
-    cached_on = mapped_column(DateTime, default=func.now())
-    content = mapped_column(String, nullable=True)
+    cached_on: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    content: Mapped[str] = mapped_column(String, nullable=True)
     content_bzip2 = mapped_column(LargeBinary, nullable=True)
-    expire_on_dt = mapped_column(
+    expire_on_dt: Mapped[datetime] = mapped_column(
         DateTime,
         doc="If current date/time is past this datetime then this "
         "record can be replaced by updated data",
+        nullable=True,
     )
 
 
@@ -362,6 +363,19 @@ pragma user_version = 1;
 
                 cache_data.expire_on_dt = expire_on_dt
                 session.commit()
+        finally:
+            session.close()
+
+    def get_expiration(self, url):
+        """get the datetime that the URL is set to expire, raises exception if url is not in cache"""
+        session = self.sessionmaker()
+        try:
+            _stat_cache = (
+                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
+            )
+            if _stat_cache is None:
+                raise CacheURLNotFound(url)
+            return _stat_cache.expire_on_dt
         finally:
             session.close()
 
