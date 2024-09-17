@@ -380,9 +380,13 @@ pragma user_version = 1;
             session.close()
 
     def set_expiration(self, url, expire_on_dt=None, expire_time_delta=None):
+        """
+        if expire_on_dt and expire_time_delta are None then expire immediately
+        """
         if expire_on_dt is None:
-            assert expire_time_delta is not None
-            expire_on_dt = datetime.now(UTC) + expire_time_delta
+            expire_on_dt = datetime.now(UTC)
+            if expire_time_delta is not None:
+                expire_on_dt += expire_time_delta
         elif expire_time_delta is not None:
             raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
 
