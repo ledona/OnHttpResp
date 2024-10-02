@@ -1,5 +1,6 @@
 import bz2
 import json
+import logging
 import os
 from datetime import UTC, datetime
 
@@ -10,6 +11,8 @@ from sqlalchemy.sql import text
 from sqlalchemy.sql.expression import case
 
 from .exception import OnHttpReqException
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class _SQLAlchemyORMBase:  # pylint: disable=too-few-public-methods
@@ -97,8 +100,11 @@ class HTTPCache:
         """
         create_cache = filename is None or not os.path.isfile(filename)
         self.dont_expire = dont_expire
-        if create_cache and verbose:
-            print(f"Creating cache file '{filename}'")
+        if verbose:
+            # TODO: this is hacky, perhaps create a logger for the instance?
+            _LOGGER.setLevel(logging.DEBUG)
+        if create_cache:
+            _LOGGER.debug("Creating cache file '%s'", filename)
 
         self.sessionmaker, engine = create_sessionmaker(filename, verbose=debug)
 
@@ -285,9 +291,11 @@ pragma user_version = 1;
                 and cache_result.expire_on_dt is not None
                 and cache_result.expire_on_dt.replace(tzinfo=UTC) < datetime.now(UTC)
             ):
-                print(
-                    f"URL '{url}' found in cache, but set for expiration in the past at "
-                    f"{cache_result.expire_on_dt}, so not returned."
+                _LOGGER.warning(
+                    "URL '%s' found in cache, but set for expiration in the past at "
+                    "%s, so not returned.",
+                    url,
+                    cache_result.expire_on_dt,
                 )
                 cache_result = None
         finally:

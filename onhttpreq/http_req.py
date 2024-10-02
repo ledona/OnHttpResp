@@ -1,6 +1,7 @@
 """HTTP requester with caching for API requests"""
 
 import http
+import logging
 import math
 import time
 import warnings
@@ -12,29 +13,35 @@ import tqdm
 
 from .cache import HTTPCache
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class CacheOnlyError(Exception):
     """raised if cache_only is enabled and a url is not in the cache"""
 
 
 class HTTPReqError(Exception):
-    def __init__(self, http_response=None, msg=None, url=None):
+    def __init__(self, http_response, msg="", url=None):
+        """
+        http_response: either a requests response or an exception
+        """
         super().__init__(msg, http_response)
         self.http_resp = http_response
         self.msg = msg
         self.url = url
 
     def __str__(self):
-        code = self.http_resp.status_code if self.http_resp is not None else None
-        headers = self.http_resp.headers if self.http_resp is not None else None
-        text = self.http_resp.text if self.http_resp is not None else None
-        return f"""HTTPReqError for url='{self.url}'
+        msg_prefix = f"HTTPReqError for url='{self.url}'"
+        if isinstance(self.http_resp, Exception):
+            return f"{msg_prefix} caused by exception {self.http_resp}"
+
+        return f"""{msg_prefix}
 msg '{self.msg}'
-status code {code}
+status code {self.http_resp.status_code}
 Headers:
-{headers}
+{self.http_resp.headers}
 Content:
-{text}"""
+{self.http_resp.text}"""
 
 
 # TODO: these should be an enum
@@ -85,7 +92,8 @@ class HTTPReq:
         on_response: A callback that can be used to process the http request responses prior to
           returning results. Useful for handling header data that should result in varying the
           behavior of the cache, handling rate limits, etc.
-          This should be a function that takes a request response, and returns None or
+          This should be a function that takes a request response or an exception (in the case of no
+          request failure), and returns None or
           a command in the form of a tuple (cmd, args_dict). If None is returned then no additional
           processing will be executed and the request response will be returned to the caller
           Available cmds and the arg_dict keys are
@@ -136,10 +144,12 @@ class HTTPReq:
         self.total_retries = 0
         self._on_response = on_response
         self.progress = progress
-        self.verbose = verbose
         self.http_requests = 0
 
         self._last_result_details: _LastResultDetails = {}
+
+        if verbose:
+            _LOGGER.setLevel(logging.DEBUG)
 
     @property
     def caching(self):
@@ -171,11 +181,12 @@ class HTTPReq:
         if wait_duration <= 0:
             return
 
-        if self.verbose:
-            print(
-                f"\nRate limit reached, reason '{reason}'. Waiting {duration} "
-                f"seconds starting at {started_waiting_dt:%X}"
-            )
+        _LOGGER.debug(
+            "Rate limit reached, reason '%s'. Waiting %i seconds starting at %s",
+            reason,
+            duration,
+            started_waiting_dt,
+        )
 
         if self.progress:
             wait_iterator = tqdm.trange(
@@ -215,7 +226,7 @@ class HTTPReq:
             return True
 
         if res[0] == ON_RESPONSE_FAIL:
-            raise HTTPReqError(http_response=get_response, msg=res[1], url=url)
+            raise HTTPReqError(get_response, msg=res[1], url=url)
 
         raise ValueError(f"on_response callback returned an unknown command. {res}")
 
@@ -266,8 +277,7 @@ class HTTPReq:
             self._wait(**self._return_wait_cmd)
             self._return_wait_cmd = None
         self.requests += 1
-        if self.verbose:
-            print(f"\nHTTP request: '{url}' : '{self._requests_kwargs}'\n")
+        _LOGGER.debug("HTTP request: '%s' : %s", url, self._requests_kwargs)
 
         result = None
         url_for_cache_key = cache_key or url
@@ -277,8 +287,9 @@ class HTTPReq:
                 if parse_json
                 else self._cache.get(url_for_cache_key)
             )
-            if self.verbose:
-                print(("not " if result is None else "") + "found in cache")
+            _LOGGER.debug(
+                "'%s' %sfound in cache", url_for_cache_key, ("not " if result is None else "")
+            )
             if result is not None:
                 self._last_result_details["retrieved_from"] = "cache"
                 self._last_result_details["expire_on_dt"] = self._cache.get_expiration(
@@ -302,11 +313,13 @@ class HTTPReq:
                 self._last_result_details["http_attempts"] += 1
                 r = requests.get(url=url, timeout=self._request_timeout, **self._requests_kwargs)
             except requests.exceptions.Timeout as ex:
-                r = None
-                if self.verbose:
-                    print(f"HTTPReq request timed out... {ex}")
+                r = ex
+                _LOGGER.error("HTTPReq request timed out... : %s", ex)
+            except requests.exceptions.ConnectionError as ex:
+                r = ex
+                _LOGGER.error("HTTPReq request failed to connect... : %s", ex)
 
-            if self.verbose and r is not None:
+            if not isinstance(r, Exception) and _LOGGER.getEffectiveLevel == logging.DEBUG:
                 print(
                     f"HTTPReq response for attempt {self._tries + 1}/{self._retries} "
                     f"code: {r.status_code}"
@@ -321,8 +334,7 @@ class HTTPReq:
             elif r is not None and r.status_code == http.client.OK:
                 break
 
-            if self.verbose:
-                print(f"Retry #{self._tries + 1}")
+            _LOGGER.debug("Retry #%i", self._tries + 1)
 
         self.total_retries += max(0, self._tries - 1)
 
@@ -334,21 +346,18 @@ class HTTPReq:
             self._last_result_details["error"] = (msg, r or "timedout")
 
             if self.progress:
-                print(msg)
+                _LOGGER.info(msg)
             if r is not None:
                 self.error_skips.append(r)
             else:
                 # timeout
                 self.error_skips.append("No response, timedout")
-            raise HTTPReqError(http_response=r, msg=msg, url=url)
+            raise HTTPReqError(r, msg=msg, url=url)
 
         if self._cache is not None and not skip_cache:
             self._cache.set(url_for_cache_key, r.text)
 
         self._last_result_details["retrieved_from"] = "web"
-
-        if self.verbose:
-            print()
 
         result = r.json() if parse_json else r.content
         return result
