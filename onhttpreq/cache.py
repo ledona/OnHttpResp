@@ -292,8 +292,7 @@ pragma user_version = 1;
                 and cache_result.expire_on_dt.replace(tzinfo=UTC) < datetime.now(UTC)
             ):
                 _LOGGER.warning(
-                    "URL '%s' found in cache, but set for expiration in the past at "
-                    "%s, so not returned.",
+                    "URL '%s' found in cache, but expired at %s, so not returned.",
                     url,
                     cache_result.expire_on_dt,
                 )
