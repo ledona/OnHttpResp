@@ -284,28 +284,33 @@ def test_alt_cache_key(mock_requests: MagicMock):
     mock_requests.get.return_value = requests_get_return_value
     url = "http://test.com/api.json"
     cache_key = "alt-key"
+    cache_url = "alt-url"
 
     # create HTTPReq with in memory cache
     http_req = HTTPReq(cache_in_memory=True)
+    assert http_req._cache is not None
 
     # use get to make a request
-    resp = http_req.get(url, cache_key=cache_key)
+    resp = http_req.get(url, cache_url=cache_url, cache_key=cache_key)
     assert resp == ref_json_result
 
     # test that requests.get was called correctly
     mock_requests.get.assert_called_once_with(url=url, timeout=None)
 
     # see if the response was cached to the correct key
-    assert http_req._cache is not None
     cached_to_url = http_req._cache.get_json(url)
-    assert cached_to_url is None
-    cached_to_key = http_req._cache.get_json(cache_key)
-    assert cached_to_key == ref_json_result
+    assert cached_to_url is None, "nothing should be stored under the URL"
 
-    # make sure that new gets correctly get from cache or from http
+    cached_to_key = http_req._cache.get_json(cache_url)
+    assert cached_to_key == ref_json_result, "should have found content associated to the cache_url"
+    cached_to_key = http_req._cache.get_json(cache_key, ident_type="key")
+    assert cached_to_key == ref_json_result, "should have found content associated to the cache_key"
+
     mock_requests.get.reset_mock()
-    resp = http_req.get("xxx", cache_key=cache_key)
+    http_req.get("xxx", cache_key=cache_key)
+    http_req.get("xxx", cache_url=cache_url)
     mock_requests.get.assert_not_called()
 
-    resp = http_req.get(url, cache_key=cache_key + "_")
+    http_req.get(url, cache_key=cache_key + "_")
     mock_requests.get.assert_called_once_with(url=url, timeout=None)
+    mock_requests.get.reset_mock()

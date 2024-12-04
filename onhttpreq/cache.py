@@ -3,9 +3,10 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
+from typing import Literal
 
-from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, sessionmaker
 from sqlalchemy.sql import text
 from sqlalchemy.sql.expression import case
@@ -34,7 +35,14 @@ CURRENT_CACHE_DB_VERSION = 1
 
 class HTTPCacheContent(_SQLAlchemyORMBase):
     __tablename__ = "content_cache"
-    url: Mapped[str] = mapped_column(String(2000), primary_key=True)
+    url: Mapped[str] = mapped_column(String(2000), primary_key=True, doc="original retrieval URL")
+    key: Mapped[str] = mapped_column(
+        String(2000),
+        nullable=True,
+        unique=True,
+        index=True,
+        doc="alternate search key for content",
+    )
     cached_on: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     content: Mapped[str] = mapped_column(String, nullable=True)
     content_bzip2 = mapped_column(LargeBinary, nullable=True)
@@ -81,10 +89,12 @@ class CacheURLNotFound(OnHttpReqException):
     url to be cached"""
 
 
+CacheIdentType = Literal["url", "key"]
+"""the type of cache identifier being used"""
+
+
 class HTTPCache:
-    """
-    cache http responses to a DB
-    """
+    """cache http responses to a DB"""
 
     def __init__(
         self,
@@ -95,9 +105,11 @@ class HTTPCache:
         store_as_compressed=False,
     ):
         """
-        filename - if None then the DB will be in memory
-        store_as_compressed - store in compressed form, and expect the cache to be compressed
+        filename: if None then the DB will be in memory
+        store_as_compressed: store in compressed form, and expect the cache to be compressed
         """
+        self.filename = filename
+        """name of the db file (if there is one)"""
         create_cache = filename is None or not os.path.isfile(filename)
         self.dont_expire = dont_expire
         if verbose:
@@ -137,7 +149,7 @@ pragma user_version = 1;
             session.close()
         self.store_as_compressed = store_as_compressed
 
-    def get_info(self, url_glob=None, dt_range=None):
+    def get_info(self, url_glob=None, dt_range=None, key_glob=None):
         """
         url_glob: glob pattern to filter urls
         return a dict with descriptive information for the cache"""
@@ -145,6 +157,8 @@ pragma user_version = 1;
         filters = []
         if url_glob is not None:
             filters.append(HTTPCacheContent.url.op("GLOB")(url_glob))
+        if key_glob is not None:
+            filters.append(HTTPCacheContent.key.op("GLOB")(key_glob))
         if dt_range is not None:
             if dt_range[0] is not None:
                 filters.append(HTTPCacheContent.cached_on >= dt_range[0])
@@ -262,7 +276,7 @@ pragma user_version = 1;
                     conflict_urls.append(hcc.url)
                     if conflict_mode == CONFLICT_MODE_FAIL:
                         raise CacheMergeConflict(f"URL '{hcc.url}' already exists")
-                    elif conflict_mode == CONFLICT_MODE_SKIP:
+                    if conflict_mode == CONFLICT_MODE_SKIP:
                         # leave the original cache as is
                         continue
 
@@ -276,27 +290,45 @@ pragma user_version = 1;
 
         return urls, conflict_urls
 
-    def get(self, url):
-        """return the content for url. returns None if the url is not in the cache"""
+    def get(self, ident: str, ident_type: CacheIdentType = "url"):
+        """
+        return the content for url. returns None if the url is not in the cache
+        ident: url or key
+        """
+        cond = (
+            (HTTPCacheContent.url == ident)
+            if ident_type == "url"
+            else (HTTPCacheContent.key == ident)
+        )
         session = self.sessionmaker()
         try:
-            cache_result = (
-                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
-            )
+            cache_result = session.execute(select(HTTPCacheContent).where(cond)).one_or_none()
 
             # if expiration is enabled then don't return anything that is expired
-            if (
-                cache_result is not None
-                and not self.dont_expire
-                and cache_result.expire_on_dt is not None
-                and cache_result.expire_on_dt.replace(tzinfo=UTC) < datetime.now(UTC)
-            ):
-                _LOGGER.warning(
-                    "URL '%s' found in cache, but expired at %s, so not returned.",
-                    url,
-                    cache_result.expire_on_dt,
+            if cache_result is not None:
+                cache_result = cache_result[0]
+                if (
+                    not self.dont_expire
+                    and cache_result.expire_on_dt is not None
+                    and cache_result.expire_on_dt.replace(tzinfo=UTC) < datetime.now(UTC)
+                ):
+                    _LOGGER.warning(
+                        "%s '%s' found in cache, but expired at %s, so not returned.",
+                        ident_type.upper(),
+                        ident,
+                        cache_result.expire_on_dt,
+                    )
+                    cache_result = None
+        except OperationalError as ex:
+            # TODO: this can be removed once all caches have been updated
+            if "no such column: content_cache.key" in ex.args[0]:
+                _LOGGER.error(
+                    """Cache DB at '%s' is missing the column content_cache.key. Add to schema with the following SQL and try again:
+alter table content_cache add column "key" varchar(2000);
+create unique index content_cache_key_idx on content_cache (key);""",
+                    self.filename,
                 )
-                cache_result = None
+            raise
         finally:
             session.close()
 
@@ -307,8 +339,8 @@ pragma user_version = 1;
         assert cache_result.content_bzip2 is not None
         return bz2.decompress(cache_result.content_bzip2)
 
-    def get_json(self, url):
-        content = self.get(url)
+    def get_json(self, ident: str, ident_type: CacheIdentType = "url"):
+        content = self.get(ident, ident_type)
         if content is not None:
             try:
                 json_result = json.loads(content)
@@ -318,75 +350,130 @@ pragma user_version = 1;
         else:
             return None
 
-    def set(self, url, content, expire_on_dt=None, expire_time_delta=None, cached_on=None):
+    def change_cache_key(self, new_key: str, old_key: str | None = None, url: str | None = None):
         """
-        Use either expire_on_dt or expire_time_delta
+        primarily for debug and cache repair, change the cache_key for a cache entry
+        """
+        if (old_key is None) == (url is None):
+            raise ValueError("one of the args old_key, url must be None and the other defined")
+        cond = (
+            (HTTPCacheContent.key == old_key)
+            if old_key is not None
+            else (HTTPCacheContent.url == url)
+        )
 
-        expire_on_dt - in UTC
-        expire_time_delta - a timedelta object that will be added to datetime.now() to calculate the
+        update_stmt = update(HTTPCacheContent).where(cond).values(key=new_key)
+        session = self.sessionmaker()
+        update_result = session.execute(update_stmt)
+        assert update_result.rowcount in (0, 1)
+        return update_result.rowcount == 1
+
+    def set(
+        self,
+        url,
+        content,
+        expire_on_dt=None,
+        expire_time_delta=None,
+        cached_on=None,
+        cache_key=None,
+    ):
+        """
+        expire_on_dt: in UTC
+        expire_time_delta: a timedelta object that will be added to datetime.now() to calculate the
            expire_on_dt
         """
         assert not (expire_on_dt is not None and expire_time_delta is not None)
         if expire_on_dt is None and expire_time_delta is not None:
             expire_on_dt = datetime.now(UTC) + expire_time_delta
 
+        if self.store_as_compressed:
+            data = content if isinstance(content, bytes) else str.encode(content)
+            kwarg_data = {"content_bzip2": bz2.compress(data)}
+        else:
+            kwarg_data = {"content": content}
+
+        if cached_on is not None:
+            kwarg_data["cached_on"] = cached_on
+
+        cache_data = HTTPCacheContent(
+            url=url, key=cache_key, expire_on_dt=expire_on_dt, **kwarg_data
+        )
+
         session = self.sessionmaker()
         try:
-            if self.store_as_compressed:
-                assert isinstance(content, (str, bytes))
-                data = content if isinstance(content, bytes) else str.encode(content)
-                kwarg_data = {"content_bzip2": bz2.compress(data)}
-            else:
-                kwarg_data = {"content": content}
-
-            if cached_on is not None:
-                kwarg_data["cached_on"] = cached_on
-
-            cache_data = HTTPCacheContent(url=url, expire_on_dt=expire_on_dt, **kwarg_data)
             session.add(cache_data)
             try:
                 session.commit()
+                return
             except IntegrityError as ie:
-                # overwrite the existing value
-                # this exception is sufficient for the sqlite3 cache implementation,
-                # may not be reslient to updates
-                if (
-                    ie.args[0]
-                    != "(sqlite3.IntegrityError) UNIQUE constraint failed: content_cache.url"
+                # test for a cache collision, this test will only work (identify collisions)
+                # for sqlite3! otherwise the exception will raise
+                if ie.args[0] not in (
+                    "(sqlite3.IntegrityError) UNIQUE constraint failed: content_cache.url",
+                    "(sqlite3.IntegrityError) UNIQUE constraint failed: content_cache.key",
                 ):
                     # there was some other exception
                     raise
 
-                session.rollback()
+            # only get here if there was a collision on url or cache_key
+            session.rollback()
+
+            # overwrite the existing value, update other values, leave the url and cache_key intact
+            cache_data = (
+                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
+            )
+            if cache_data is None:
+                if cache_key is None:
+                    raise CacheURLNotFound(
+                        f"Unexpected failure during cache collision handling for {url=} {cache_key=}. "
+                        "Collision occured but no data found in cache for url?!"
+                    )
                 cache_data = (
-                    session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one()
+                    session.query(HTTPCacheContent)
+                    .filter(HTTPCacheContent.key == cache_key)
+                    .one_or_none()
                 )
+                if cache_data is None:
+                    raise CacheURLNotFound(
+                        f"Unexpected failure during cache collision handling for {url=} {cache_key=}. "
+                        "Collision occured but no data found in cache for either url or the cache_key?!"
+                    )
 
-                if self.store_as_compressed:
-                    data = content if isinstance(content, bytes) else str.encode(content)
-                    cache_data.content_bzip2 = bz2.compress(data)
-                else:
-                    cache_data.content = content
+            cache_data.cached_on = cached_on or func.now()
+            cache_data.expire_on_dt = expire_on_dt
+            if self.store_as_compressed:
+                data = content if isinstance(content, bytes) else str.encode(content)
+                cache_data.content_bzip2 = bz2.compress(data)
+            else:
+                cache_data.content = content
 
-                cache_data.expire_on_dt = expire_on_dt
-                session.commit()
+            session.commit()
         finally:
             session.close()
 
-    def get_expiration(self, url):
+    def get_expiration(self, ident, ident_type: CacheIdentType = "url"):
         """get the datetime that the URL is set to expire, raises exception if url is not in cache"""
+        cond = (
+            (HTTPCacheContent.url == ident)
+            if ident_type == "url"
+            else (HTTPCacheContent.key == ident)
+        )
         session = self.sessionmaker()
         try:
-            _stat_cache = (
-                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
-            )
+            _stat_cache = session.query(HTTPCacheContent).filter(cond).one_or_none()
             if _stat_cache is None:
-                raise CacheURLNotFound(url)
+                raise CacheURLNotFound(ident, ident_type)
             return _stat_cache.expire_on_dt
         finally:
             session.close()
 
-    def set_expiration(self, url, expire_on_dt=None, expire_time_delta=None):
+    def set_expiration(
+        self,
+        ident,
+        ident_type: CacheIdentType = "url",
+        expire_on_dt=None,
+        expire_time_delta=None,
+    ):
         """
         if expire_on_dt and expire_time_delta are None then expire immediately
         """
@@ -397,13 +484,16 @@ pragma user_version = 1;
         elif expire_time_delta is not None:
             raise ValueError("Only one of expire_on_dt and expire_time_delta can be not None")
 
+        cond = (
+            (HTTPCacheContent.url == ident)
+            if ident_type == "url"
+            else (HTTPCacheContent.key == ident)
+        )
         session = self.sessionmaker()
         try:
-            _stat_cache = (
-                session.query(HTTPCacheContent).filter(HTTPCacheContent.url == url).one_or_none()
-            )
+            _stat_cache = session.query(HTTPCacheContent).filter(cond).one_or_none()
             if _stat_cache is None:
-                raise CacheURLNotFound(url)
+                raise CacheURLNotFound(ident, ident_type)
             _stat_cache.expire_on_dt = expire_on_dt
             session.commit()
         finally:

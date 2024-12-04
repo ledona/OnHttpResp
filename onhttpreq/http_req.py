@@ -11,7 +11,7 @@ from typing import Any, Callable, Literal, TypedDict, cast
 import requests
 import tqdm
 
-from .cache import HTTPCache
+from .cache import CacheIdentType, HTTPCache
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,11 +52,22 @@ ON_RESPONSE_RETURN_WAIT = "return_wait"
 ON_RESPONSE_FAIL = "fail"
 """raise a failure for the http request"""
 
+_LastResultDetailsCacheRetrievalKeyType = Literal["url", "cache_url", "cache_key"]
+"""type for the cache_retrieval_key value"""
+
 
 class _LastResultDetails(TypedDict, total=False):
     url: str
+    """the http url for the requested content"""
+    cache_url: str | None
+    """the cachable url for the content"""
+    cache_key: str | None
+    """the cache key used for the content"""
     http_attempts: int
     retrieved_from: Literal["cache", "web"]
+    """where was the content retrieved from"""
+    cache_retrieval_key: _LastResultDetailsCacheRetrievalKeyType
+    """if content was retrieved from the cache, which key was used"""
     error: tuple[str, Any]
     expire_on_dt: datetime | None
 
@@ -261,17 +272,25 @@ class HTTPReq:
         parse_json=True,
         cache_fail_func=None,
         skip_cache=False,
+        cache_url: str | None = None,
         cache_key: str | None = None,
     ) -> _GetReturnType:
         """
         cache_fail_func: if cache is enabled and the url is not in the cache and this is not None
            then call this func. Useful for displaying messages
-        cache_key: if not None then caching of the request content will use this key instead
-           of the url. if None then cache storage/lookup will be against the url
+        cache_url: The url to store in the cache instead of the request URL. Useful if the\
+            actual url contains information that should not be written to the cache.
+        cache_key: if not None then the cache key will be set to this, if None then caching will\
+            be based on the url or cache_url. required if cache_url is not None
         """
-        assert not (skip_cache and self.cache_only)
+        assert not (skip_cache and self.cache_only), "This is an invalid combination"
 
-        self._last_result_details = {"url": url, "http_attempts": 0}
+        self._last_result_details = {
+            "url": url,
+            "cache_url": cache_url,
+            "cache_key": cache_key,
+            "http_attempts": 0,
+        }
 
         if self._return_wait_cmd is not None:
             self._wait(**self._return_wait_cmd)
@@ -280,26 +299,31 @@ class HTTPReq:
         _LOGGER.debug("HTTP request: '%s' : %s", url, self._requests_kwargs)
 
         result = None
-        url_for_cache_key = cache_key or url
         if self._cache is not None and not self.cache_overwrite and not skip_cache:
-            result = (
-                self._cache.get_json(url_for_cache_key)
-                if parse_json
-                else self._cache.get(url_for_cache_key)
-            )
-            _LOGGER.debug(
-                "'%s' %sfound in cache", url_for_cache_key, ("not " if result is None else "")
-            )
-            if result is not None:
-                self._last_result_details["retrieved_from"] = "cache"
-                self._last_result_details["expire_on_dt"] = self._cache.get_expiration(
-                    url_for_cache_key
+            searches: list[tuple[str, CacheIdentType, _LastResultDetailsCacheRetrievalKeyType]] = [
+                (url, "url", "url")
+            ]
+            if cache_url is not None:
+                searches.append((cache_url, "url", "cache_url"))
+            if cache_key is not None:
+                searches.append((cache_key, "key", "cache_key"))
+            for ident, ident_type, cache_retrieval_key_type in searches:
+                result = (
+                    self._cache.get_json(ident, ident_type=ident_type)
+                    if parse_json
+                    else self._cache.get(ident, ident_type=ident_type)
                 )
-                self.requests_from_cache += 1
-                return cast(HTTPReq._GetReturnType, result)
+                if result is not None:
+                    self._last_result_details["retrieved_from"] = "cache"
+                    self._last_result_details["expire_on_dt"] = self._cache.get_expiration(
+                        ident, ident_type=ident_type
+                    )
+                    self._last_result_details["cache_retrieval_key"] = cache_retrieval_key_type
+                    self.requests_from_cache += 1
+                    return cast(HTTPReq._GetReturnType, result)
 
         if self.cache_only:
-            raise CacheOnlyError(f"'{url_for_cache_key}' not in cache")
+            raise CacheOnlyError(f"{url=}|{cache_key=} not in cache")
 
         # cache search failed
         if cache_fail_func is not None:
@@ -319,30 +343,25 @@ class HTTPReq:
                 r = ex
                 _LOGGER.error("HTTPReq request failed to connect... : %s", ex)
 
-            if not isinstance(r, Exception) and _LOGGER.getEffectiveLevel == logging.DEBUG:
-                print(
-                    f"HTTPReq response for attempt {self._tries + 1}/{self._retries} "
-                    f"code: {r.status_code}"
-                )
-                print(f"HTTPReq Headers: {r.headers}")
-                print()
-                print(r.text)
+            # if not isinstance(r, Exception) and _LOGGER.getEffectiveLevel == logging.DEBUG:
+            #     print(
+            #         f"HTTPReq response for attempt {self._tries + 1}/{self._retries} "
+            #         f"code: {r.status_code}"
+            #     )
+            #     print(f"HTTPReq Headers: {r.headers}")
+            #     print()
+            #     print(r.text)
 
             if self._on_response is not None:
                 if self._process_on_response(r, url):
                     break
-            elif r is not None and r.status_code == http.client.OK:
+            elif r is not None and not isinstance(r, Exception) and r.status_code == http.client.OK:
                 break
-
-            _LOGGER.debug("Retry #%i", self._tries + 1)
 
         self.total_retries += max(0, self._tries - 1)
 
-        if (r is None) or (r.status_code != http.client.OK):
-            msg = (
-                f"Failed to retrieve '{url_for_cache_key}' "
-                f"after {self._tries + 1} attempts. Skipping"
-            )
+        if (r is None) or isinstance(r, Exception) or (r.status_code != http.client.OK):
+            msg = f"Failed to retrieve '{url}' " f"after {self._tries + 1} attempts. Skipping"
             self._last_result_details["error"] = (msg, r or "timedout")
 
             if self.progress:
@@ -355,7 +374,8 @@ class HTTPReq:
             raise HTTPReqError(r, msg=msg, url=url)
 
         if self._cache is not None and not skip_cache:
-            self._cache.set(url_for_cache_key, r.text)
+            # save to cache
+            self._cache.set(cache_url or url, r.text, cache_key=cache_key)
 
         self._last_result_details["retrieved_from"] = "web"
 
