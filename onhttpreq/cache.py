@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -319,16 +319,6 @@ pragma user_version = 1;
                         cache_result.expire_on_dt,
                     )
                     cache_result = None
-        except OperationalError as ex:
-            # TODO: this can be removed once all caches have been updated
-            if "no such column: content_cache.key" in ex.args[0]:
-                _LOGGER.error(
-                    """Cache DB at '%s' is missing the column content_cache.key. Add to schema with the following SQL and try again:
-alter table content_cache add column "key" varchar(2000);
-create unique index content_cache_key_idx on content_cache (key);""",
-                    self.filename,
-                )
-            raise
         finally:
             session.close()
 
@@ -463,7 +453,23 @@ create unique index content_cache_key_idx on content_cache (key);""",
             _stat_cache = session.query(HTTPCacheContent).filter(cond).one_or_none()
             if _stat_cache is None:
                 raise CacheURLNotFound(ident, ident_type)
-            return _stat_cache.expire_on_dt
+            return cast(datetime | None, _stat_cache.expire_on_dt)
+        finally:
+            session.close()
+
+    def clear_expiration(self, ident, ident_type: CacheIdentType = "url"):
+        cond = (
+            (HTTPCacheContent.url == ident)
+            if ident_type == "url"
+            else (HTTPCacheContent.key == ident)
+        )
+        session = self.sessionmaker()
+        try:
+            _stat_cache = session.query(HTTPCacheContent).filter(cond).one_or_none()
+            if _stat_cache is None:
+                raise CacheURLNotFound(ident, ident_type)
+            _stat_cache.expire_on_dt = None
+            session.commit()
         finally:
             session.close()
 
