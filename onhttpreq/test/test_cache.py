@@ -103,11 +103,11 @@ def _compressed_cache():
     _populate_fake_cache(cache)
     return cache
 
-
+# TODO: add tests for key_pattern and exact match
 @pytest.mark.parametrize(
     "filter_kwargs, ref_urls, ref_info_update",
     [
-        ([{"url_glob": "url[13]"}, {"url1", "url3"}, {}]),
+        ([{"url_pattern": "url[13]"}, {"url1", "url3"}, {}]),
         (
             [
                 {"dt_range": (None, _REF_MID_DT)},
@@ -124,7 +124,7 @@ def _compressed_cache():
         ),
         (
             [
-                {"dt_range": (_REF_MID_DT, None), "url_glob": "*2"},
+                {"dt_range": (_REF_MID_DT, None), "url_pattern": "*2"},
                 {"url2"},
                 {"earliest_dt": _REF_MID_DT, "latest_dt": _REF_MID_DT, "n_expirable": 0},
             ]
@@ -167,6 +167,7 @@ def test_filter_w_dest(compressed_cache, delete, dest, filter_kwargs):
     assert {"url1", "url2"} == set(urls)
 
     if dest:
+        assert dest_cache is not None
         urls = dest_cache.filter("url[12]")
         assert {"url1", "url2"} == set(urls)
         info = dest_cache.get_info()
