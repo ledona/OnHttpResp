@@ -9,7 +9,7 @@ from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, sessionmaker
 from sqlalchemy.sql import text
-from sqlalchemy.sql.expression import case
+from sqlalchemy.sql.expression import case, null
 
 from .exception import OnHttpReqException
 
@@ -149,16 +149,23 @@ pragma user_version = 1;
             session.close()
         self.store_as_compressed = store_as_compressed
 
+    NULL = null()
+
     def get_info(self, url_glob=None, dt_range=None, key_glob=None):
         """
         url_glob: glob pattern to filter urls
+        key_glob: glob pattern to filter cache_key. HTTPCache.NULL to\
+            for filter for no key
         return a dict with descriptive information for the cache"""
         result = {}
         filters = []
         if url_glob is not None:
             filters.append(HTTPCacheContent.url.op("GLOB")(url_glob))
         if key_glob is not None:
-            filters.append(HTTPCacheContent.key.op("GLOB")(key_glob))
+            if key_glob is self.NULL:
+                filters.append(HTTPCacheContent.key == self.NULL)
+            else:
+                filters.append(HTTPCacheContent.key.op("GLOB")(key_glob))
         if dt_range is not None:
             if dt_range[0] is not None:
                 filters.append(HTTPCacheContent.cached_on >= dt_range[0])
@@ -354,7 +361,11 @@ pragma user_version = 1;
 
         update_stmt = update(HTTPCacheContent).where(cond).values(key=new_key)
         session = self.sessionmaker()
-        update_result = session.execute(update_stmt)
+        try:
+            update_result = session.execute(update_stmt)
+            session.commit()
+        finally:
+            session.close()
         assert update_result.rowcount in (0, 1)
         return update_result.rowcount == 1
 
