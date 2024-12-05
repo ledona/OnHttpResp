@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 
 from sqlalchemy import DateTime, Index, LargeBinary, String, create_engine, func, select, update
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, sessionmaker
 from sqlalchemy.sql import text
 from sqlalchemy.sql.expression import case
@@ -166,24 +166,24 @@ pragma user_version = 1;
                 filters.append(HTTPCacheContent.cached_on < dt_range[1])
         session = self.sessionmaker()
         try:
-            result["n"] = session.query(HTTPCacheContent.url).filter(*filters).count()
+            result["n"] = session.execute(
+                select(func.count(HTTPCacheContent.url)).where(*filters)
+            ).one()[0]
             (
                 result["earliest_dt"],
                 result["latest_dt"],
                 result["n_expirable"],
                 result["n_not_compressed"],
                 result["n_compressed"],
-            ) = (
-                session.query(
+            ) = session.execute(
+                select(
                     func.min(HTTPCacheContent.cached_on),
                     func.max(HTTPCacheContent.cached_on),
                     func.sum(case((HTTPCacheContent.expire_on_dt.isnot(None), 1), else_=0)),
                     func.sum(case((HTTPCacheContent.content.isnot(None), 1), else_=0)),
                     func.sum(case((HTTPCacheContent.content_bzip2.isnot(None), 1), else_=0)),
-                )
-                .filter(*filters)
-                .one()
-            )
+                ).where(*filters)
+            ).one()
 
             if result["n_not_compressed"] is None:
                 result["n_not_compressed"] = 0
