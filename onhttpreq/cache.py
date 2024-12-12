@@ -151,22 +151,14 @@ pragma user_version = 1;
 
     NULL = null()
 
-    def get_info(
-        self,
-        url_pattern=None,
-        dt_range=None,
-        key_pattern=None,
-        pattern_type: Literal["glob", "exact"] = "glob",
+    @classmethod
+    def _create_filter_conds(
+        cls,
+        url_pattern: None | str,
+        dt_range: None | str,
+        key_pattern: None | str,
+        pattern_type: Literal["glob", "exact"],
     ):
-        """
-        Use with no args to get overall summary information for the cache
-
-        url_pattern: glob pattern to filter urls
-        key_pattern: glob pattern to filter cache_key. HTTPCache.NULL to\
-            for filter for no key
-        return a dict with descriptive information for the cache
-        """
-        result = {}
         filters = []
         if url_pattern is not None:
             filters.append(
@@ -175,8 +167,8 @@ pragma user_version = 1;
                 else HTTPCacheContent.url == url_pattern
             )
         if key_pattern is not None:
-            if key_pattern is self.NULL:
-                filters.append(HTTPCacheContent.key == self.NULL)
+            if key_pattern is cls.NULL:
+                filters.append(HTTPCacheContent.key == cls.NULL)
             else:
                 filters.append(
                     HTTPCacheContent.key.op("GLOB")(key_pattern)
@@ -188,6 +180,25 @@ pragma user_version = 1;
                 filters.append(HTTPCacheContent.cached_on >= dt_range[0])
             if dt_range[1] is not None:
                 filters.append(HTTPCacheContent.cached_on < dt_range[1])
+        return filters
+
+    def get_info(
+        self,
+        url_pattern=None,
+        dt_range=None,
+        key_pattern=None,
+        pattern_type: Literal["glob", "exact"] = "glob",
+    ):
+        """
+        Use with no args to get overall summary information for the cache
+
+        url_pattern: pattern to filter urls
+        key_pattern: pattern to filter cache_key. HTTPCache.NULL to\
+            for filter for no key
+        return a dict with descriptive information for the cache
+        """
+        result = {}
+        filters = self._create_filter_conds(url_pattern, dt_range, key_pattern, pattern_type)
         session = self.sessionmaker()
         try:
             result["n"] = session.execute(
@@ -219,7 +230,15 @@ pragma user_version = 1;
 
         return result
 
-    def filter(self, url_glob=None, dt_range=None, dest_cache=None, delete=False):
+    def filter(
+        self,
+        url_pattern=None,
+        dt_range=None,
+        dest_cache=None,
+        delete=False,
+        key_pattern=None,
+        pattern_type: Literal["glob", "exact"] = "glob",
+    ):
         """
         filter for urls that match the pattern. A url glob pattern or dt range is required
 
@@ -231,23 +250,14 @@ pragma user_version = 1;
 
         returns: list of URLs that match the regex
         """
-        raise NotImplementedError("Update to accomodate cache_key")
-        if (url_glob is None) and (dt_range is None):
+        if (url_pattern is None) and (dt_range is None) and (key_pattern is None):
             raise ValueError("url_glob or dt_range must be not None")
 
         urls = []
         session = self.sessionmaker()
         dest_session = dest_cache.sessionmaker() if dest_cache is not None else None
+        filters = self._create_filter_conds(url_pattern, dt_range, key_pattern, pattern_type)
         try:
-            filters = []
-            if url_glob is not None:
-                filters.append(HTTPCacheContent.url.op("GLOB")(url_glob))
-            if dt_range is not None:
-                if dt_range[0] is not None:
-                    filters.append(HTTPCacheContent.cached_on >= dt_range[0])
-                if dt_range[1] is not None:
-                    filters.append(HTTPCacheContent.cached_on < dt_range[1])
-
             for hcc in session.query(HTTPCacheContent).filter(*filters).all():
                 urls.append(hcc.url)
                 if delete:

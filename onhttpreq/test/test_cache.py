@@ -68,10 +68,11 @@ _REF_MID_DT = datetime(2019, 4, 7, 18, 51)
 _REF_LAST_DT = datetime(2019, 4, 8, 18, 52)
 
 
-def _populate_fake_cache(cache):
+def _populate_fake_cache(cache: HTTPCache):
     cache.set("url1", "content A", cached_on=_REF_EARLY_DT)
     cache.set("url2", "content B", cached_on=_REF_MID_DT)
     cache.set("url3", "content C", expire_on_dt=datetime.now(), cached_on=_REF_LAST_DT)
+    # cache.set("urlK", "content D", cache_key="key")
 
 
 _BASE_REF_INFO = {
@@ -154,9 +155,9 @@ def test_filter(compressed_cache, filter_kwargs, ref_urls, ref_info_update):
 @pytest.mark.parametrize(
     "delete, dest, filter_kwargs",
     [
-        (True, True, {"url_glob": "url[12]"}),
-        (True, False, {"url_glob": "url[12]"}),
-        (False, True, {"url_glob": "url[12]"}),
+        (True, True, {"url_pattern": "url[12]"}),
+        (True, False, {"url_pattern": "url[12]"}),
+        (False, True, {"url_pattern": "url[12]"}),
         (False, True, {"dt_range": (None, _REF_MID_DT + timedelta(minutes=1))}),
         (False, True, {"dt_range": (_REF_EARLY_DT, _REF_MID_DT + timedelta(minutes=1))}),
     ],
@@ -242,4 +243,4 @@ def test_merge_w_conflict(merge_cache, compressed_cache, conflict_mode):
         ref_data.update({"url2": "content B", "url3": "content C"})
 
     test_data = {url: compressed_cache.get(url).decode() for url in compressed_cache.filter("*")}
-    assert ref_data == test_data
+    assert test_data == ref_data
