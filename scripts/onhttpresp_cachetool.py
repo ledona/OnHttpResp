@@ -13,11 +13,11 @@ from onhttpreq.cache import (
 )
 
 
-def info(args, cache):
+def info(args, cache: HTTPCache):
     pprint(cache.get_info(url_pattern=args.url))
 
 
-def filter_(args, cache):
+def filter_(args, cache: HTTPCache):
     if args.dest_cachefile is not None:
         if os.path.isfile(args.dest_cachefile):
             if (
@@ -49,7 +49,7 @@ def filter_(args, cache):
         raise ValueError("--url, --dt_start or --dt_end must be specified")
 
     urls = cache.filter(
-        url_glob=args.url, dt_range=dt_range, dest_cache=dest_cache, delete=args.delete
+        url_pattern=args.url, dt_range=dt_range, dest_cache=dest_cache, delete=args.delete
     )
 
     if args.verbose:
@@ -66,14 +66,14 @@ def filter_(args, cache):
             pprint(info)
 
 
-def merge(args, cache):
+def merge(args, cache: HTTPCache):
     """
     merge a cache into this cache
 
     cache - the dest cache that data will be merged to
     """
     if not os.path.isfile(args.other_cachefile):
-        raise FileNotFoundError("Cache file '{}' not found!".format(args.cachefile))
+        raise FileNotFoundError(f"Cache file '{args.cachefile}' not found!")
 
     other_cache = HTTPCache(
         filename=args.other_cachefile,
@@ -109,8 +109,15 @@ def merge(args, cache):
         print("\n".join(conflict_urls))
 
 
-def get(args, cache):
+def get(args, cache: HTTPCache):
     content = cache.get(args.url)
+    if content is None:
+        print(f"'{args.url}' not found as a URL in cache")
+        content = cache.get(args.url, ident_type="key")
+    if content is None:
+        print(f"'{args.url}' not found as a cache-key")
+        return
+
     print(content.decode())
     print("\n")
 
