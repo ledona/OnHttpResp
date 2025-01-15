@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from freezegun import freeze_time
@@ -71,7 +71,7 @@ _REF_LAST_DT = datetime(2019, 4, 8, 18, 52)
 def _populate_fake_cache(cache: HTTPCache):
     cache.set("url1", "content A", cached_on=_REF_EARLY_DT)
     cache.set("url2", "content B", cached_on=_REF_MID_DT)
-    cache.set("url3", "content C", expire_on_dt=datetime.now(), cached_on=_REF_LAST_DT)
+    cache.set("url3", "content C", expire_on_dt=datetime.now(UTC), cached_on=_REF_LAST_DT)
     # cache.set("urlK", "content D", cache_key="key")
 
 
@@ -103,6 +103,7 @@ def _compressed_cache():
     cache = HTTPCache(store_as_compressed=True)
     _populate_fake_cache(cache)
     return cache
+
 
 # TODO: add tests for key_pattern and exact match
 @pytest.mark.parametrize(

@@ -5,7 +5,7 @@ import logging
 import math
 import time
 import warnings
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Literal, TypedDict, cast
 
 import requests
@@ -185,7 +185,7 @@ class HTTPReq:
 
         self.total_wait_secs += duration
         if started_waiting_dt is None:
-            started_waiting_dt = datetime.now()
+            started_waiting_dt = datetime.now(UTC)
 
         wait_till_dt = started_waiting_dt + timedelta(seconds=duration)
         wait_duration = (wait_till_dt - started_waiting_dt).total_seconds()
@@ -209,7 +209,7 @@ class HTTPReq:
             wait_iterator = range(math.ceil(wait_duration))
         for _ in wait_iterator:
             time.sleep(1)
-            if datetime.now() > wait_till_dt:
+            if datetime.now(UTC) > wait_till_dt:
                 # in case the computer hibernates, the progress will be off but
                 # exit on time
                 break
@@ -233,7 +233,7 @@ class HTTPReq:
 
         if res[0] == ON_RESPONSE_RETURN_WAIT:
             assert isinstance(res[1], dict)
-            self._return_wait_cmd = {"started_waiting_dt": datetime.now(), **res[1]}
+            self._return_wait_cmd = {"started_waiting_dt": datetime.now(UTC), **res[1]}
             return True
 
         if res[0] == ON_RESPONSE_FAIL:
