@@ -26,7 +26,7 @@ def _create_mock_request_get(status_code=http.client.OK, text=None, _json=None):
     return mock
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 def test_get_w_cache_w_expiration(mock_requests: MagicMock):
     """test that get will work and that subsequent get will come from the the cache"""
 
@@ -88,7 +88,7 @@ def test_get_w_cache_w_expiration(mock_requests: MagicMock):
     assert resp == ref_new_json_result
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 def test_cache_ignore_expire(mock_requests):
     ref_json_result = {"data": 32}
     requests_get_return_value = _create_mock_request_get(
@@ -121,7 +121,7 @@ def test_cache_ignore_expire(mock_requests):
     assert resp == ref_json_result
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 def test_cache_overwrite(mock_requests):
     ref_first_json_result = {"data": "will be overwritten"}
     mock_requests.get.return_value = _create_mock_request_get(
@@ -157,7 +157,7 @@ def test_cache_overwrite(mock_requests):
     assert test_cached_json == ref_second_json_result
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 def test_on_response(mock_requests):
     # test that the on_response callback gets called
 
@@ -178,7 +178,7 @@ def test_on_response(mock_requests):
     on_response_mock.assert_called_once_with(mock_requests.get.return_value)
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 def test_retry(mock_requests):
     ref_json_result = {"data": "will eventually be returned"}
     req_get_fails = 0
@@ -212,7 +212,7 @@ def test_retry(mock_requests):
     assert mock_requests.get.call_count == 6
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 @patch("onhttpreq.http_req.time.sleep")
 def test_on_response_wait_retry(mock_sleep: MagicMock, mock_requests):
     ret = False
@@ -237,7 +237,7 @@ def test_on_response_wait_retry(mock_sleep: MagicMock, mock_requests):
     assert mock_requests.get.call_count == 2
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 @patch("onhttpreq.http_req.time.sleep")
 def test_on_response_return_wait(mock_sleep, mock_requests):
     ret = False
@@ -273,7 +273,7 @@ def test_on_response_return_wait(mock_sleep, mock_requests):
         mock_sleep.assert_called_with(1)
 
 
-@patch("onhttpreq.http_req.requests")
+@patch("onhttpreq.http_req.basic_requests")
 def test_alt_cache_key(mock_requests: MagicMock):
     """test alternative cache key is used"""
 

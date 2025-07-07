@@ -8,7 +8,8 @@ import warnings
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Literal, TypedDict, cast
 
-import requests
+import curl_cffi.requests as curl_requests
+import requests as basic_requests
 import tqdm
 
 from .cache import CacheIdentType, HTTPCache
@@ -91,6 +92,7 @@ class HTTPReq:
         cache_dont_expire=False,
         compression=False,
         cache_only=False,
+        curl_impersonate=False,
     ):
         """
         cache_in_memory: if true then create an in memory cache
@@ -100,6 +102,7 @@ class HTTPReq:
         request_timeout: timeout in seconds for a request reqponse, if no response is received
           then a retry is attempted (if there are retries remaining)
         compression: compress the cache
+        curl_impersonate: use curl impersonation
         on_response: A callback that can be used to process the http request responses prior to
           returning results. Useful for handling header data that should result in varying the
           behavior of the cache, handling rate limits, etc.
@@ -155,6 +158,7 @@ class HTTPReq:
         self.total_retries = 0
         self._on_response = on_response
         self.progress = progress
+        self.curl_impersonate = curl_impersonate
         self.http_requests = 0
 
         self._last_result_details: _LastResultDetails = {}
@@ -330,6 +334,9 @@ class HTTPReq:
             cache_fail_func()
 
         self._tries = 0
+
+        requests = curl_requests if self.curl_impersonate else basic_requests
+
         while self._tries < self._retries + 1:
             self._tries += 1
             self.http_requests += 1

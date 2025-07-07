@@ -4,6 +4,9 @@ sqlalchemy
 pytz
 python-dateutil
 
+# needed for trickery
+curl_cffi
+
 # for testing
 pytest
 freezegun
