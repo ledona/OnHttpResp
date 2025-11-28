@@ -3,6 +3,7 @@
 import http
 import logging
 import math
+import os
 import time
 import warnings
 from datetime import UTC, datetime, timedelta
@@ -75,7 +76,6 @@ class _LastResultDetails(TypedDict, total=False):
 
 # TODO: on_response should also take a URL arg
 class HTTPReq:
-
     _tries: None | int
 
     def __init__(
@@ -121,18 +121,25 @@ class HTTPReq:
             entire response dict will be on the raised exception in case there is a need to
             pass through additional data
         """
-        assert not (
-            (cache_filename is not None) and cache_in_memory
-        ), "caching can't both be in memory and to a file"
-        assert not (
-            cache_only and not cache_dont_expire
-        ), "cache_dont_expire must be True if cache_only is True"
+        if (cache_filename is not None) and cache_in_memory:
+            raise ValueError("caching can't both be in memory and to a file")
+        if cache_only and not cache_dont_expire:
+            raise CacheOnlyError(
+                f"Cannot initialize with {cache_dont_expire=} {cache_only=}: "
+                "cache_dont_expire must be True if cache_only is True"
+            )
 
         self.cache_overwrite = cache_overwrite
 
-        assert not (
-            cache_filename is None and cache_only
-        ), "cache_only + no cache_filename means there is no chance of getting results"
+        if cache_only:
+            if cache_filename is None:
+                raise CacheOnlyError(
+                    "Cannot initialize with cache_only=True if cache_filename is None"
+                )
+            if not os.path.isfile(cache_filename):
+                raise CacheOnlyError(
+                    f"Cannot initialize with cache_only=True. No cachefile exists at {cache_filename=}"
+                )
         self.cache_filename = cache_filename
         self.cache_only = cache_only
 
@@ -368,7 +375,7 @@ class HTTPReq:
         self.total_retries += max(0, self._tries - 1)
 
         if (r is None) or isinstance(r, Exception) or (r.status_code != http.client.OK):
-            msg = f"Failed to retrieve '{url}' " f"after {self._tries + 1} attempts. Skipping"
+            msg = f"Failed to retrieve '{url}' after {self._tries + 1} attempts. Skipping"
             self._last_result_details["error"] = (msg, r or "timedout")
 
             if self.progress:
