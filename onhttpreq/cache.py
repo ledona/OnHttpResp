@@ -111,7 +111,12 @@ class HTTPCache:
         self.filename = filename
         """name of the db file (if there is one)"""
         create_cache = filename is None or not os.path.isfile(filename)
+
         self.dont_expire = dont_expire
+        """if true then don't expire things"""
+        self._dont_expire_warnings_left = 10
+        """if don't expire and this is 0 then stop warning about trying to expire when dont_expire is True"""
+
         if verbose:
             # TODO: this is hacky, perhaps create a logger for the instance?
             _LOGGER.setLevel(logging.DEBUG)
@@ -522,6 +527,15 @@ pragma user_version = 1;
         """
         if expire_on_dt and expire_time_delta are None then expire immediately
         """
+        if self.dont_expire:
+            if self._dont_expire_warnings_left > 0:
+                _LOGGER.warning(
+                    "Ignoring request to expire %s ident='%s' HTTPCache entry because dont_expire=True",
+                    ident_type,
+                    ident,
+                )
+                self._dont_expire_warnings_left -= 1
+            return
         if expire_on_dt is None:
             expire_on_dt = datetime.now(UTC)
             if expire_time_delta is not None:
