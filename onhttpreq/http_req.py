@@ -357,15 +357,6 @@ class HTTPReq:
                 r = ex
                 _LOGGER.error("HTTPReq request failed to connect... : %s", ex)
 
-            # if not isinstance(r, Exception) and _LOGGER.getEffectiveLevel == logging.DEBUG:
-            #     print(
-            #         f"HTTPReq response for attempt {self._tries + 1}/{self._retries} "
-            #         f"code: {r.status_code}"
-            #     )
-            #     print(f"HTTPReq Headers: {r.headers}")
-            #     print()
-            #     print(r.text)
-
             if self._on_response is not None:
                 if self._process_on_response(r, url):
                     break

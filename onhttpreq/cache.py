@@ -412,6 +412,8 @@ pragma user_version = 1;
         cache_key=None,
     ):
         """
+        add a new record to the cache
+
         expire_on_dt: in UTC
         expire_time_delta: a timedelta object that will be added to datetime.now() to calculate the
            expire_on_dt
