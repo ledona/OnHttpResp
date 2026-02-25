@@ -334,7 +334,9 @@ class HTTPReq:
                     return cast(HTTPReq._GetReturnType, result)
 
         if self.cache_only:
-            raise CacheOnlyError(f"{url=}|{cache_key=} not in cache '{self.cache_filename}'")
+            raise CacheOnlyError(
+                f"{url=} | {cache_url=} | {cache_key=} not in cache '{self.cache_filename}'"
+            )
 
         # cache search failed
         if cache_fail_func is not None:
