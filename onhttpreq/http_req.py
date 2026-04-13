@@ -252,16 +252,36 @@ class HTTPReq:
 
         raise ValueError(f"on_response callback returned an unknown command. {res}")
 
+    def clear_cache_expiration(self, url):
+        if self.cache_only:
+            warnings.warn(
+                f"Ignoring an attempted to clear a cache expiration for '{url}'. cacheonly is enabled"
+            )
+            return
+        if self._cache is None:
+            warnings.warn(
+                f"Ignoring an attempt to clear an cache expiration for '{url}'. cacheonly is enabled"
+            )
+            return
+
+        self._cache.clear_expiration(url)
+
     def set_cached_expiration(self, url, **expiration):
         """
         for kwargs see cache set_expiration
         """
-        if self._cache:
-            self._cache.set_expiration(url, **expiration)
-        else:
+        if self._cache is None:
             warnings.warn(
                 f"Attempted to expire '{url}' from cache, but caching is not currently enabled."
             )
+            return
+        if self.cache_only:
+            warnings.warn(
+                f"Attempted to expire '{url}' from cache, but caching is in cacheonly mode."
+            )
+            return
+
+        self._cache.set_expiration(url, **expiration)
 
     @property
     def history(self):
