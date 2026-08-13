@@ -6,8 +6,9 @@ import math
 import os
 import time
 import warnings
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 import curl_cffi.requests as curl_requests
 import requests as basic_requests
